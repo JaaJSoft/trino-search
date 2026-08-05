@@ -13,6 +13,8 @@
  */
 package dev.jaaj.trino.search;
 
+import dev.jaaj.trino.search.vector.VectorDistanceFunctions;
+import dev.jaaj.trino.search.vector.VectorFunctions;
 import io.trino.spi.Plugin;
 
 import java.util.Set;
@@ -23,6 +25,8 @@ public class SearchPlugin
     @Override
     public Set<Class<?>> getFunctions()
     {
-        return Set.of();
+        return Set.of(
+                VectorDistanceFunctions.class,
+                VectorFunctions.class);
     }
 }
