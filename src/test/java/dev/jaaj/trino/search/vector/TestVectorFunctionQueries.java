@@ -14,12 +14,19 @@
 package dev.jaaj.trino.search.vector;
 
 import dev.jaaj.trino.search.SearchPlugin;
+import io.trino.spi.type.ArrayType;
 import io.trino.testing.AbstractTestQueryFramework;
+import io.trino.testing.MaterializedResult;
 import io.trino.testing.QueryRunner;
 import io.trino.testing.StandaloneQueryRunner;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
+import static io.trino.spi.type.RealType.REAL;
 import static io.trino.testing.TestingSession.testSessionBuilder;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
 public class TestVectorFunctionQueries
         extends AbstractTestQueryFramework
@@ -66,6 +73,27 @@ public class TestVectorFunctionQueries
         // both are applicable through coercion). A real array(double) column is unaffected: it
         // binds to the double overload by exact match, with no coercion or ambiguity involved.
         assertQuery("SELECT normalize_vector(CAST(ARRAY[3.0, 4.0] AS array(double)))", "SELECT ARRAY[CAST(0.6 AS DOUBLE), CAST(0.8 AS DOUBLE)]");
+    }
+
+    @Test
+    public void testNormalizeVectorUncastFormNowBindsToRealOverload()
+    {
+        // Coverage for the natural, uncast call form that testNormalizeVectorValues stopped
+        // exercising once it needed an explicit CAST (see the comment there). Since Task 5, an
+        // untyped decimal array literal such as ARRAY[3.0, 4.0] resolves to the plugin's
+        // array(real) overload of normalize_vector, not the engine's array(double) one - this is
+        // an accepted consequence of reusing the native SQL name (see README.md). This test pins
+        // that: the uncast form now returns an array(real), with the values still correct within
+        // float32 precision (3.0 and 4.0 are exactly representable in float32, so 0.6 and 0.8
+        // still need a tolerance because the division is not exact in either precision).
+        MaterializedResult result = computeActual("SELECT normalize_vector(ARRAY[3.0, 4.0])");
+        assertThat(result.getTypes()).containsExactly(new ArrayType(REAL));
+
+        List<Object> row = result.getMaterializedRows().get(0).getFields();
+        List<?> values = (List<?>) row.get(0);
+        assertThat(values).hasSize(2);
+        assertThat((Float) values.get(0)).isCloseTo(0.6f, within(1e-6f));
+        assertThat((Float) values.get(1)).isCloseTo(0.8f, within(1e-6f));
     }
 
     @Test

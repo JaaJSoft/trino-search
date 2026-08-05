@@ -33,6 +33,27 @@ en ajoute les surcharges `array(real)` et complète ce qui manque.
 utilisables directement sur des colonnes `array(real)`, sans `CAST` vers `array(double)` qui
 doublerait l'empreinte memoire.
 
+#### Résolution de surcharge sur un littéral non typé
+
+Le plugin réutilise volontairement les noms natifs (`euclidean_distance`, `dot_product`,
+`cosine_similarity`, `cosine_distance`) plutôt que des noms distincts, pour qu'une requête écrite
+pour une colonne `array(double)` fonctionne sans modification sur une colonne `array(real)`.
+
+Une conséquence : un littéral décimal non typé comme `ARRAY[0.1, 0.2]` se lie désormais à la
+surcharge `array(real)` du plugin, pas à l'implémentation native `array(double)` du moteur (Trino
+préfère la coercition la plus étroite quand plusieurs surcharges sont applicables par coercition).
+Cela affecte deux choses :
+
+- **La précision** : les éléments sont lus en float32 avant le calcul, ce qui donne un résultat
+  légèrement différent du calcul natif en double précision.
+- **Le traitement des `NULL`** : la surcharge `array(real)` renvoie `NULL` si un élément du
+  tableau est `NULL`, alors que l'implémentation native `array(double)` lit un `NULL` comme `0.0`.
+
+Ce comportement ne concerne que les littéraux non typés, utilisés en pratique surtout pour des
+tests ou des requêtes ad hoc. Une colonne réellement typée `array(double)`, un `CAST(... AS
+array(double))` explicite, ou des littéraux `DOUBLE 'x'`, se lient tous à l'implémentation native
+et conservent son comportement (précision double, `NULL` lu comme `0.0`).
+
 ### Agrégation
 
 ```sql

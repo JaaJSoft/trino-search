@@ -91,9 +91,17 @@ public class TestVectorRealFunctionQueries
     }
 
     @Test
-    public void testDoubleOverloadStillResolves()
+    public void testDecimalLiteralsWithExactFloat32ValuesMatchEitherOverload()
     {
-        // adding real overloads must not shadow the double ones
+        // Renamed from the brief's testDoubleOverloadStillResolves. Its original name claimed it
+        // proved the array(double) overload still resolves for an untyped decimal literal, but it
+        // does not: 0.0, 3.0, 4.0, 1.0, -2.0 and 2.0 are all exactly representable in float32, so
+        // this test passes identically whichever overload (array(real) or array(double)) the
+        // literal resolves to. It is still a useful correctness check (both overloads must agree
+        // on values within float32's exact range), just not an overload-resolution guarantee.
+        // See testUntypedDecimalLiteralBindsToRealOverload and
+        // testCastToArrayDoubleBindsToNativeDoubleOverload for tests that actually discriminate
+        // which overload an untyped literal binds to.
         assertQuery("SELECT euclidean_distance(ARRAY[0.0, 0.0], ARRAY[3.0, 4.0])", "SELECT 5.0");
         assertQuery("SELECT manhattan_distance(ARRAY[1.0, -2.0], ARRAY[4.0, 2.0])", "SELECT 7.0");
     }
@@ -111,6 +119,58 @@ public class TestVectorRealFunctionQueries
         // that finding).
         MaterializedResult result = computeActual("SELECT normalize_vector(CAST(ARRAY[3.0, 4.0] AS array(double)))");
         assertThat(result.getTypes()).containsExactly(new ArrayType(DOUBLE));
+    }
+
+    @Test
+    public void testUntypedDecimalLiteralBindsToRealOverload()
+    {
+        // 0.1, 0.2, 0.3 and 0.4 are not exactly representable in float32, so the real-path result
+        // (elements read as float32, then computed) differs measurably from the native
+        // array(double) result pinned by testCastToArrayDoubleBindsToNativeDoubleOverload. This
+        // pins Trino's overload resolution for an untyped decimal array literal: reusing the
+        // native SQL name (required so a query written for array(double) also works on
+        // array(real)) means ARRAY[0.1, 0.2] binds to the plugin's array(real) overload unless
+        // the argument is explicitly typed as array(double). Values measured with a temporary
+        // debug query against this build; see the report for the exact numbers and their source.
+        assertThat(actualDouble("SELECT euclidean_distance(ARRAY[0.1, 0.2], ARRAY[0.3, 0.4])"))
+                .isCloseTo(0.28284272195765997, within(1e-10));
+        assertThat(actualDouble("SELECT dot_product(ARRAY[0.1, 0.2], ARRAY[0.3, 0.4])"))
+                .isCloseTo(0.11000000402331356, within(1e-10));
+    }
+
+    @Test
+    public void testCastToArrayDoubleBindsToNativeDoubleOverload()
+    {
+        // Same expressions as testUntypedDecimalLiteralBindsToRealOverload, but with an explicit
+        // CAST to array(double): this forces exact-match resolution to Trino's native
+        // array(double) implementation, which computes in double precision throughout and gives
+        // a different, more precise, result than the array(real) overload above.
+        assertThat(actualDouble("SELECT euclidean_distance(CAST(ARRAY[0.1, 0.2] AS array(double)), CAST(ARRAY[0.3, 0.4] AS array(double)))"))
+                .isCloseTo(0.282842712474619, within(1e-10));
+        assertThat(actualDouble("SELECT dot_product(CAST(ARRAY[0.1, 0.2] AS array(double)), CAST(ARRAY[0.3, 0.4] AS array(double)))"))
+                .isCloseTo(0.11000000000000001, within(1e-10));
+    }
+
+    @Test
+    public void testNullElementFlipsBetweenUntypedAndCastForm()
+    {
+        // The plugin's array(real) overloads return NULL when any element is NULL (approved
+        // divergence from the native array(double) behaviour, which reads a NULL element as
+        // 0.0). Because an untyped decimal array literal binds to the array(real) overload (see
+        // testUntypedDecimalLiteralBindsToRealOverload), the same expression with an explicit
+        // CAST to array(double) gives a different, non-null, native answer instead of NULL.
+        assertQuery("SELECT euclidean_distance(ARRAY[0.1, NULL], ARRAY[0.3, 0.4]) IS NULL", "SELECT true");
+        assertThat(actualDouble("SELECT euclidean_distance(CAST(ARRAY[0.1, NULL] AS array(double)), CAST(ARRAY[0.3, 0.4] AS array(double)))"))
+                .isCloseTo(0.4472135954999579, within(1e-10));
+
+        assertQuery("SELECT dot_product(ARRAY[0.1, NULL], ARRAY[0.3, 0.4]) IS NULL", "SELECT true");
+        assertThat(actualDouble("SELECT dot_product(CAST(ARRAY[0.1, NULL] AS array(double)), CAST(ARRAY[0.3, 0.4] AS array(double)))"))
+                .isCloseTo(0.03, within(1e-10));
+    }
+
+    private double actualDouble(String sql)
+    {
+        return (double) (Double) computeActual(sql).getOnlyValue();
     }
 
     @Test
