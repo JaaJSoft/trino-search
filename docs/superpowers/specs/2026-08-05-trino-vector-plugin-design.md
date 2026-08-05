@@ -225,12 +225,18 @@ chemin n'est jamais emprunté.
 
 ## 9. Contrainte d'environnement
 
-Trino 483 impose **Java 25**. La machine de développement ne dispose que des JDK 8, 16 et 17, et
-Maven n'est pas installé.
+Trino 483 impose **Java 25**.
 
-- Maven : résolu par le Maven Wrapper committé dans le dépôt, qui se télécharge seul
-- JDK 25 : doit être installé (Temurin 25). Tant qu'il ne l'est pas, le code ne peut être ni
-  compilé ni testé, et aucune affirmation de bon fonctionnement ne peut être faite
+- **JDK 25 : installé et vérifié**, Temurin 25.0.1+8, dans
+  `C:\Program Files\Eclipse Adoptium\jdk-25.0.1.8-hotspot`
+- **Maven : absent du système**, résolu par le Maven Wrapper committé dans le dépôt, qui se
+  télécharge seul au premier appel
+- **`JAVA_HOME` pointe sur le JDK 8** et le `java` du `PATH` est le 8. Le wrapper Maven
+  sélectionne son JDK via `JAVA_HOME` : chaque commande de build doit donc être préfixée par
+  `JAVA_HOME="C:\Program Files\Eclipse Adoptium\jdk-25.0.1.8-hotspot"`. La variable globale
+  n'est pas modifiée, d'autres projets de la machine dépendant du JDK 8.
+- Le cache Maven local est quasi vide : le premier build téléchargera l'intégralité des
+  dépendances et sera long
 
 ## 10. Extensions prévues (hors périmètre)
 
