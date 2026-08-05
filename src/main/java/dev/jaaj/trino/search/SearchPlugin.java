@@ -15,6 +15,7 @@ package dev.jaaj.trino.search;
 
 import dev.jaaj.trino.search.vector.VectorDistanceFunctions;
 import dev.jaaj.trino.search.vector.VectorFunctions;
+import dev.jaaj.trino.search.vector.knn.KnnAggregation;
 import io.trino.spi.Plugin;
 
 import java.util.Set;
@@ -27,6 +28,8 @@ public class SearchPlugin
     {
         return Set.of(
                 VectorDistanceFunctions.class,
-                VectorFunctions.class);
+                VectorFunctions.class,
+                KnnAggregation.OfDoubleVectors.class,
+                KnnAggregation.OfRealVectors.class);
     }
 }
