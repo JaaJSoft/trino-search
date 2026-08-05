@@ -23,8 +23,10 @@ import io.trino.spi.function.SqlType;
 import io.trino.spi.type.StandardTypes;
 
 import static dev.jaaj.trino.search.vector.VectorReader.DOUBLE_READER;
+import static dev.jaaj.trino.search.vector.VectorReader.REAL_READER;
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static io.trino.spi.type.DoubleType.DOUBLE;
+import static io.trino.spi.type.RealType.REAL;
 
 public final class VectorFunctions
 {
@@ -59,6 +61,39 @@ public final class VectorFunctions
         BlockBuilder output = DOUBLE.createFixedSizeBlockBuilder(vector.getPositionCount());
         for (int i = 0; i < vector.getPositionCount(); i++) {
             DOUBLE.writeDouble(output, DOUBLE_READER.read(vector, i) / norm);
+        }
+        return output.build();
+    }
+
+    @Description("Calculates the euclidean norm of a vector")
+    @ScalarFunction("l2_norm")
+    @SqlType(StandardTypes.DOUBLE)
+    @SqlNullable
+    public static Double l2NormReal(@SqlType("array(real)") Block vector)
+    {
+        if (vector.hasNull()) {
+            return null;
+        }
+        return VectorMath.norm(vector, REAL_READER);
+    }
+
+    @Description("Scales a vector to unit norm")
+    @ScalarFunction("normalize_vector")
+    @SqlType("array(real)")
+    @SqlNullable
+    public static Block normalizeVectorReal(@SqlType("array(real)") Block vector)
+    {
+        if (vector.hasNull()) {
+            return null;
+        }
+        double norm = VectorMath.norm(vector, REAL_READER);
+        if (norm == 0) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Vector magnitude cannot be zero");
+        }
+
+        BlockBuilder output = REAL.createFixedSizeBlockBuilder(vector.getPositionCount());
+        for (int i = 0; i < vector.getPositionCount(); i++) {
+            REAL.writeFloat(output, (float) (REAL_READER.read(vector, i) / norm));
         }
         return output.build();
     }

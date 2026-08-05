@@ -21,6 +21,7 @@ import io.trino.spi.function.SqlType;
 import io.trino.spi.type.StandardTypes;
 
 import static dev.jaaj.trino.search.vector.VectorReader.DOUBLE_READER;
+import static dev.jaaj.trino.search.vector.VectorReader.REAL_READER;
 
 public final class VectorDistanceFunctions
 {
@@ -50,5 +51,83 @@ public final class VectorDistanceFunctions
             return null;
         }
         return VectorMath.manhattan(first, second, DOUBLE_READER);
+    }
+
+    @Description("Calculates the squared euclidean distance between two vectors")
+    @ScalarFunction("euclidean_squared_distance")
+    @SqlType(StandardTypes.DOUBLE)
+    @SqlNullable
+    public static Double euclideanSquaredDistanceReal(@SqlType("array(real)") Block first, @SqlType("array(real)") Block second)
+    {
+        VectorMath.checkSameLength(first, second);
+        if (VectorMath.hasNulls(first, second)) {
+            return null;
+        }
+        return VectorMath.euclideanSquared(first, second, REAL_READER);
+    }
+
+    @Description("Calculates the manhattan distance between two vectors")
+    @ScalarFunction("manhattan_distance")
+    @SqlType(StandardTypes.DOUBLE)
+    @SqlNullable
+    public static Double manhattanDistanceReal(@SqlType("array(real)") Block first, @SqlType("array(real)") Block second)
+    {
+        VectorMath.checkSameLength(first, second);
+        if (VectorMath.hasNulls(first, second)) {
+            return null;
+        }
+        return VectorMath.manhattan(first, second, REAL_READER);
+    }
+
+    @Description("Calculates the euclidean distance between two vectors")
+    @ScalarFunction("euclidean_distance")
+    @SqlType(StandardTypes.DOUBLE)
+    @SqlNullable
+    public static Double euclideanDistanceReal(@SqlType("array(real)") Block first, @SqlType("array(real)") Block second)
+    {
+        VectorMath.checkSameLength(first, second);
+        if (VectorMath.hasNulls(first, second)) {
+            return null;
+        }
+        return VectorMath.euclidean(first, second, REAL_READER);
+    }
+
+    @Description("Calculates the dot product between two vectors")
+    @ScalarFunction("dot_product")
+    @SqlType(StandardTypes.DOUBLE)
+    @SqlNullable
+    public static Double dotProductReal(@SqlType("array(real)") Block first, @SqlType("array(real)") Block second)
+    {
+        VectorMath.checkSameLength(first, second);
+        if (VectorMath.hasNulls(first, second)) {
+            return null;
+        }
+        return VectorMath.dotProduct(first, second, REAL_READER);
+    }
+
+    @Description("Calculates the cosine similarity between two vectors")
+    @ScalarFunction("cosine_similarity")
+    @SqlType(StandardTypes.DOUBLE)
+    @SqlNullable
+    public static Double cosineSimilarityReal(@SqlType("array(real)") Block first, @SqlType("array(real)") Block second)
+    {
+        VectorMath.checkSameLength(first, second);
+        if (VectorMath.hasNulls(first, second)) {
+            return null;
+        }
+        return VectorMath.cosineSimilarity(first, second, REAL_READER);
+    }
+
+    @Description("Calculates the cosine distance between two vectors")
+    @ScalarFunction("cosine_distance")
+    @SqlType(StandardTypes.DOUBLE)
+    @SqlNullable
+    public static Double cosineDistanceReal(@SqlType("array(real)") Block first, @SqlType("array(real)") Block second)
+    {
+        Double similarity = cosineSimilarityReal(first, second);
+        if (similarity == null) {
+            return null;
+        }
+        return 1.0 - similarity;
     }
 }

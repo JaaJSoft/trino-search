@@ -59,7 +59,13 @@ public class TestVectorFunctionQueries
     @Test
     public void testNormalizeVectorValues()
     {
-        assertQuery("SELECT normalize_vector(ARRAY[3.0, 4.0])", "SELECT ARRAY[CAST(0.6 AS DOUBLE), CAST(0.8 AS DOUBLE)]");
+        // CAST to array(double) forces exact-match overload resolution. Since Task 5 added an
+        // array(real) overload of normalize_vector with the same SQL name, an untyped decimal
+        // array literal like ARRAY[3.0, 4.0] now resolves to the array(real) overload instead
+        // (Trino's function binder prefers the narrower real coercion over the double one when
+        // both are applicable through coercion). A real array(double) column is unaffected: it
+        // binds to the double overload by exact match, with no coercion or ambiguity involved.
+        assertQuery("SELECT normalize_vector(CAST(ARRAY[3.0, 4.0] AS array(double)))", "SELECT ARRAY[CAST(0.6 AS DOUBLE), CAST(0.8 AS DOUBLE)]");
     }
 
     @Test
