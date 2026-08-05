@@ -50,6 +50,28 @@
     </dependencyManagement>
 
     <dependencies>
+        <!--
+          Needed for @SuppressFBWarnings: the KNN accumulator state hands out its live,
+          mutable heap on purpose (the aggregation input/combine functions mutate it in
+          place), which SpotBugs' EI_EXPOSE_REP/EI_EXPOSE_REP2 cannot tell apart from an
+          accidental leak. Annotation-only at runtime (CLASS retention), so provided scope
+          is enough.
+        -->
+        <dependency>
+            <groupId>com.github.spotbugs</groupId>
+            <artifactId>spotbugs-annotations</artifactId>
+            <version>4.10.3</version>
+            <scope>provided</scope>
+            <exclusions>
+                <!-- Only @SuppressFBWarnings is used; drop the unused jsr305 dependency
+                     rather than adding it to the trino-maven-plugin allow-list too. -->
+                <exclusion>
+                    <groupId>com.google.code.findbugs</groupId>
+                    <artifactId>jsr305</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
         <dependency>
             <groupId>io.airlift</groupId>
             <artifactId>slice</artifactId>
@@ -112,6 +134,16 @@
                 <artifactId>trino-maven-plugin</artifactId>
                 <version>20</version>
                 <extensions>true</extensions>
+                <configuration>
+                    <!--
+                      spotbugs-annotations is compile-time only (CLASS retention, read by the
+                      SpotBugs static analyzer): it is legitimately "provided" scope without being
+                      part of the actual Trino SPI available at plugin runtime.
+                    -->
+                    <allowedProvidedDependencies>
+                        <id>com.github.spotbugs:spotbugs-annotations</id>
+                    </allowedProvidedDependencies>
+                </configuration>
             </plugin>
 
             <!--
