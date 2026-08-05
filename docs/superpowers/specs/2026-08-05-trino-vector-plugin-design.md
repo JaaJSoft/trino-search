@@ -21,14 +21,32 @@ Sont volontairement exclus, et ne doivent pas être anticipés dans le code :
 - connecteur ou table function (PTF)
 - persistance d'index
 
-### Ce que le plugin apporte par rapport à Trino nu
+### Ce que Trino 483 fournit déjà
 
-Trino 483 sait déjà faire un top-k exact global : `ORDER BY cosine_similarity(...) LIMIT k`,
-avec un TopN distribué efficace. Le plugin ajoute ce qui manque :
+`io.trino.operator.scalar.ArrayVectorFunctions` expose nativement, sur `array(double)`
+uniquement :
 
-- les métriques absentes du moteur : L2, L2 au carré, produit scalaire, L1, distance cosinus
+`euclidean_distance`, `dot_product`, `cosine_similarity`, `cosine_distance`.
+
+Le plugin ne les réimplémente pas. Ce n'est pas seulement une question de doublon :
+`GlobalFunctionCatalog.addFunctions` lève une `IllegalArgumentException` quand un plugin
+enregistre un couple nom + signature déjà présent. Un plugin qui déclarerait
+`dot_product(array(double), array(double))` **empêcherait le serveur de démarrer**.
+
+Une surcharge sur `array(real)` est en revanche une signature distincte et cohabite sans
+conflit.
+
+Trino sait par ailleurs déjà faire un top-k exact global : `ORDER BY euclidean_distance(...)
+LIMIT k`, avec un TopN distribué efficace.
+
+### Ce que le plugin apporte
+
+- les métriques absentes du moteur : `euclidean_squared_distance`, `manhattan_distance`
 - les utilitaires `l2_norm` et `normalize_vector` (sur vecteurs normalisés, cosinus et produit
   scalaire coïncident, ce qui divise le coût du calcul)
+- les surcharges `array(real)` de **toutes** les fonctions vectorielles, y compris les quatre
+  natives : les tables d'embeddings sont fréquemment stockées en float32, et passer par un
+  `CAST` vers `array(double)` double l'empreinte mémoire à chaque lecture
 - un top-k **par groupe** à mémoire bornée, qu'aucune construction SQL ne fournit sans trier
   l'intégralité de chaque groupe
 
@@ -58,7 +76,8 @@ assumée).
 
 Dépendances, en `provided` (fournies par le serveur, jamais embarquées) :
 `io.trino:trino-spi`, `io.airlift:slice`.
-En `compile` : `com.google.guava:guava`.
+En `compile` : `com.google.guava:guava`, `io.trino:trino-array` (pour `ObjectBigArray`, comme
+`trino-ml`).
 En `test` : `io.trino:trino-testing`, `io.trino:trino-main`, `io.trino:trino-main` (test-jar),
 `org.junit.jupiter:junit-jupiter-api`, `org.assertj:assertj-core`.
 
@@ -96,41 +115,55 @@ calcule en **une seule passe** sur les deux blocs, sans allocation ni tableau in
 
 ### Règles de bord
 
-| Cas | Comportement |
-| --- | --- |
-| dimensions différentes | `TrinoException(INVALID_FUNCTION_ARGUMENT)`, message contenant les deux tailles |
-| élément `NULL` dans un tableau | `TrinoException(INVALID_FUNCTION_ARGUMENT)` |
-| argument tableau `NULL` | résultat `NULL` (comportement standard Trino) |
-| deux tableaux vides | `l2_distance`, `l2_squared_distance`, `l1_distance`, `dot_product` valent `0` |
-| deux tableaux vides | `cosine_distance` vaut `NULL` |
-| norme nulle (`cosine_distance`, `normalize_vector`) | `NULL`, jamais `NaN` |
+Elles sont **alignées sur `ArrayVectorFunctions`**, pas définies indépendamment. Un utilisateur
+mélangera nécessairement fonctions natives et fonctions du plugin dans une même requête : deux
+sémantiques divergentes seraient un piège silencieux.
 
-Un `NaN` renvoyé silencieusement se propagerait dans un `ORDER BY` avec un ordre de tri
-arbitraire. `NULL` est le seul résultat qui rend l'indéfini visible.
+| Cas | Comportement | Source |
+| --- | --- | --- |
+| dimensions différentes | `TrinoException(INVALID_FUNCTION_ARGUMENT)`, « The arguments must have the same length » | natif |
+| élément `NULL` dans un tableau | résultat `NULL` | natif (`cosineSimilarity`) |
+| argument tableau `NULL` | résultat `NULL` | moteur |
+| norme nulle | `TrinoException(INVALID_FUNCTION_ARGUMENT)`, « Vector magnitude cannot be zero » | natif (`cosineSimilarity`) |
+| deux tableaux vides | `euclidean_squared_distance` et `manhattan_distance` valent `0` ; `l2_norm` vaut `0` ; `normalize_vector` lève (norme nulle) | cohérence |
+
+Les fonctions susceptibles de renvoyer `NULL` doivent être annotées `@SqlNullable` et retourner
+`Double` plutôt que `double`, comme `cosineSimilarity`.
+
+`checkCondition` (`io.trino.util.Failures`) appartient à `trino-main` et **n'est pas dans le
+SPI** : le plugin lève directement `new TrinoException(INVALID_FUNCTION_ARGUMENT, message)`.
 
 ## 6. Fonctions scalaires
 
-Toutes déclinées en `array(double)` et `array(real)` par surcharge `@ScalarFunction`. Pas de
-cast implicite de `real` vers `double` : il doublerait l'empreinte mémoire sur des tables
-d'embeddings stockées en float32.
+**Nouvelles métriques**, déclinées en `array(double)` et `array(real)` :
 
 | Signature | Résultat |
 | --- | --- |
-| `l2_distance(x, y) -> double` | distance euclidienne |
-| `l2_squared_distance(x, y) -> double` | son carré, sans `sqrt` |
-| `cosine_distance(x, y) -> double` | `1 - cos(x, y)` |
-| `dot_product(x, y) -> double` | produit scalaire, valeur brute |
-| `l1_distance(x, y) -> double` | distance de Manhattan |
+| `euclidean_squared_distance(x, y) -> double` | carré de la distance euclidienne, sans `sqrt` |
+| `manhattan_distance(x, y) -> double` | distance L1 |
 | `l2_norm(x) -> double` | norme euclidienne |
 | `normalize_vector(x)` | vecteur de norme 1, du même type que l'entrée |
 
-`normalize_vector` préserve le type d'entrée : `array(double)` en entrée donne `array(double)`,
+**Surcharges `array(real)` des fonctions natives**, qui n'existent qu'en `array(double)` dans
+Trino 483 :
+
+`euclidean_distance`, `dot_product`, `cosine_similarity`, `cosine_distance`.
+
+Ces surcharges portent le **même nom** que les natives : c'est légal et souhaitable, la
+résolution de surcharge se fait sur la signature. Réutiliser le nom natif garantit qu'une
+requête écrite pour `array(double)` fonctionne à l'identique sur une colonne `array(real)`.
+
+Conventions de nommage : le registre est celui de Trino, qui a choisi `euclidean_distance` et
+non `l2_distance`. D'où `euclidean_squared_distance` et `manhattan_distance` plutôt que
+`l2_squared_distance` et `l1_distance`. `l2_norm` fait exception, c'est le nom mathématique
+universellement reconnu.
+
+`normalize_vector` préserve le type d'entrée : `array(double)` donne `array(double)`,
 `array(real)` donne `array(real)`. Promouvoir en `double` doublerait l'empreinte mémoire d'une
 colonne float32 sans gain de précision réel.
 
-`cosine_distance` et non `cosine_similarity` : Trino fournit déjà la similarité, et une
-*distance* se trie en `ASC` comme toutes les autres métriques, ce qui évite l'erreur classique
-du `DESC` oublié.
+Aucune fonction du plugin ne duplique une signature native. C'est une contrainte de démarrage
+du serveur, pas une préférence de style, et un test doit la verrouiller.
 
 ## 7. Agrégation `knn_agg`
 
@@ -149,8 +182,13 @@ knn_agg(key, vector, query_vector, k, metric) -> array(row(key, distance))
 
 ### Métriques acceptées
 
-`'l2'`, `'l2_squared'`, `'cosine'`, `'dot_product'`, `'l1'`. Valeur inconnue :
+`'euclidean'`, `'euclidean_squared'`, `'cosine'`, `'dot_product'`, `'manhattan'`. La
+comparaison est insensible à la casse. Valeur inconnue :
 `TrinoException(INVALID_FUNCTION_ARGUMENT)` listant les valeurs valides.
+
+`Metric` est aussi le point d'implémentation des métriques : chaque constante porte le calcul
+correspondant, y compris pour les quatre reprises du moteur. Le plugin ne peut pas appeler
+`ArrayVectorFunctions`, qui appartient à `trino-main` et n'est pas dans le SPI.
 
 ### Sens de tri
 
@@ -161,13 +199,29 @@ que la fonction scalaire homonyme calculerait.
 
 ### État
 
-Un tas borné à `k` par groupe. Les clés, de type générique, sont accumulées dans un
-`BlockBuilder` avec un tas sur les positions, et le builder est compacté quand il dépasse un
-multiple de `k`. C'est le mécanisme employé en amont par `min_by` et `max_by`.
+Un tas binaire borné à `k` par groupe, avec le **pire élément à la racine** : ajouter un
+candidat quand le tas est plein revient à comparer avec la racine et, le cas échéant, la
+remplacer puis redescendre. Coût O(log k) par ligne, mémoire O(k) par groupe, contre O(n) pour
+un `array_agg` suivi d'un tri.
 
-Mémoire en O(k) par groupe, contre O(n) pour un `array_agg` suivi d'un tri. `getEstimatedSize()`
-est implémenté : Trino comptabilise alors la mémoire et interrompt proprement la requête au lieu
-de tomber en `OutOfMemoryError`.
+Les clés, de type générique, sont conservées comme valeurs natives Java via
+`TypeUtils.readNativeValue(Type, Block, int)` et réécrites avec
+`TypeUtils.writeNativeValue(Type, BlockBuilder, Object)`. Les deux sont dans le SPI
+(`io.trino.spi.type.TypeUtils`).
+
+Ce choix est délibérément le plus simple des trois possibles. `TypedHeap`, employé en amont par
+`min_by`, stocke les clés en mémoire plate avec des `MethodHandle` : il appartient à
+`trino-main`, n'est pas accessible depuis un plugin, et sa réimplémentation coûterait plusieurs
+centaines de lignes. Une variante à `BlockBuilder` compacté éviterait le boxing mais impose une
+logique de compaction et de remappage de positions. Pour un `k` typique (10 à 100), le boxing
+est négligeable devant le calcul de distance lui-même. Si le profilage le contredit un jour, le
+tas est isolé derrière une classe et remplaçable sans toucher au reste.
+
+L'état groupé indexe ces tas par `groupId` via `ObjectBigArray` (artefact `io.trino:trino-array`,
+la même dépendance qu'utilise `trino-ml`).
+
+`getEstimatedSize()` est implémenté : Trino comptabilise alors la mémoire et interrompt
+proprement la requête au lieu de tomber en `OutOfMemoryError`.
 
 ### Distribution
 
@@ -176,8 +230,11 @@ agrégation en deux passes (partielle par worker, puis finale) : sans `@CombineF
 correcte, l'agrégation renvoie des résultats faux dès que les données sont réparties sur
 plusieurs splits.
 
-`KnnStateSerializer` sérialise l'état vers `row(bigint, varchar, array(row(K, double)))`,
-c'est-à-dire `k`, la métrique, puis le contenu du tas.
+`KnnStateSerializer` sérialise l'état vers `ROW(BIGINT, VARCHAR, ARRAY(ROW(K, DOUBLE)))`,
+c'est-à-dire `k`, la métrique, puis le contenu du tas. Ce type est déclaré dans
+`@AccumulatorStateMetadata(typeParameters = "K", serializedType = "...")`, et le constructeur
+de la fabrique comme celui du sérialiseur reçoivent le type de clé par
+`@TypeParameter("K") Type keyType`, sur le modèle de `ArrayAggregationState` en amont.
 
 `k` et la métrique **doivent** faire partie de l'état sérialisé. L'agrégation finale ne voit
 jamais les lignes d'origine : elle ne reçoit que des états partiels désérialisés. Sans ces deux
@@ -222,6 +279,12 @@ attrape les erreurs de tas et de fusion, invisibles sur trois lignes écrites à
 Un test force explicitement plusieurs splits afin que le chemin `@CombineFunction` soit
 réellement exercé : sur de petits jeux de données, Trino n'agrège que sur un seul worker et ce
 chemin n'est jamais emprunté.
+
+**Le tout premier test à écrire est celui du chargement du plugin** : installer `VectorPlugin`
+dans un `StandaloneQueryRunner` doit réussir. Il échoue immédiatement si une signature entre en
+collision avec une fonction native, ce qui est le mode de panne le plus coûteux du projet
+(serveur qui refuse de démarrer). Il coûte cinq lignes et couvre toutes les fonctions ajoutées
+par la suite.
 
 ## 9. Contrainte d'environnement
 

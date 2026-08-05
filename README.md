@@ -11,22 +11,24 @@ n'importe quel catalogue.
 
 Les vecteurs sont des `array(double)` ou des `array(real)`. Aucun type custom, aucun `CAST`.
 
-### Distances et similarités
+Trino fournit déjà nativement `euclidean_distance`, `dot_product`, `cosine_similarity` et
+`cosine_distance`, mais uniquement sur `array(double)`. Le plugin ne les réimplémente pas : il
+en ajoute les surcharges `array(real)` et complète ce qui manque.
+
+### Nouvelles métriques
 
 | Fonction | Description |
 | --- | --- |
-| `l2_distance(x, y)` | distance euclidienne |
-| `l2_squared_distance(x, y)` | carré de la distance euclidienne (même ordre de tri, sans `sqrt`) |
-| `cosine_distance(x, y)` | `1 - cosine_similarity(x, y)` |
-| `dot_product(x, y)` | produit scalaire (similarite : plus grand = plus proche) |
-| `l1_distance(x, y)` | distance de Manhattan |
-
-### Utilitaires
-
-| Fonction | Description |
-| --- | --- |
+| `euclidean_squared_distance(x, y)` | carré de la distance euclidienne (même ordre de tri, sans `sqrt`) |
+| `manhattan_distance(x, y)` | distance L1 |
 | `l2_norm(x)` | norme euclidienne |
-| `normalize_vector(x)` | vecteur normalise (norme 1) |
+| `normalize_vector(x)` | vecteur normalise (norme 1), du meme type que l'entree |
+
+### Surcharges `array(real)`
+
+`euclidean_distance`, `dot_product`, `cosine_similarity` et `cosine_distance` deviennent
+utilisables directement sur des colonnes `array(real)`, sans `CAST` vers `array(double)` qui
+doublerait l'empreinte memoire.
 
 ### Agrégation
 
@@ -35,14 +37,15 @@ knn_agg(key, vector, query_vector, k, metric) -> array(row(key, distance))
 ```
 
 Renvoie les `k` plus proches voisins de `query_vector` **par groupe**, triés du plus proche au
-plus lointain. `metric` vaut `'l2'`, `'l2_squared'`, `'cosine'`, `'dot_product'` ou `'l1'`.
+plus lointain. `metric` vaut `'euclidean'`, `'euclidean_squared'`, `'cosine'`, `'dot_product'`
+ou `'manhattan'`.
 
 ## Exemples
 
-Top 10 global, en SQL standard :
+Top 10 global sur une colonne `array(real)`, grace a la surcharge ajoutee par le plugin :
 
 ```sql
-SELECT id, l2_distance(embedding, ARRAY[0.1, 0.2, 0.3]) AS distance
+SELECT id, euclidean_distance(embedding, ARRAY[REAL '0.1', REAL '0.2', REAL '0.3']) AS distance
 FROM documents
 ORDER BY distance
 LIMIT 10;
