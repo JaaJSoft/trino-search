@@ -126,7 +126,7 @@
                 <groupId>org.basepom.maven</groupId>
                 <artifactId>duplicate-finder-maven-plugin</artifactId>
                 <configuration>
-                    <exceptions>
+                    <exceptions combine.children="append">
                         <exception>
                             <conflictingDependencies>
                                 <dependency>
