@@ -1,7 +1,10 @@
-# trino-vector
+# trino-search
 
-Plugin [Trino](https://trino.io) de fonctions vectorielles : distances, normalisation et
-recherche des k plus proches voisins (KNN) exacte, directement en SQL.
+Plugin [Trino](https://trino.io) de fonctions de recherche. La première famille couvre les
+vecteurs : distances, normalisation et recherche des k plus proches voisins (KNN) exacte,
+directement en SQL.
+
+<https://github.com/JaaJSoft/trino-search>
 
 Le plugin n'expose que des fonctions. Il ne définit ni catalogue ni connecteur : une fois le
 JAR déposé dans le répertoire des plugins, les fonctions sont disponibles globalement, sur
@@ -71,7 +74,7 @@ GROUP BY category;
 ./mvnw clean package
 ```
 
-Copier le contenu de `target/trino-vector-<version>/` dans `<trino>/plugin/vector/`, puis
+Copier le contenu de `target/trino-search-<version>/` dans `<trino>/plugin/search/`, puis
 redémarrer le serveur.
 
 ## État du projet

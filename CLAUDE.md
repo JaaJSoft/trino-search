@@ -1,10 +1,15 @@
-# trino-vector - Claude guidance
+# trino-search - Claude guidance
 
-Trino plugin providing vector distance functions and exact KNN search as SQL functions.
-Standalone repository, not part of the Trino tree.
+Trino plugin providing search functions as SQL functions. The first family covers vectors:
+distance metrics, normalization and exact KNN search. Standalone repository
+(<https://github.com/JaaJSoft/trino-search>), not part of the Trino tree.
+
+The name is broader than the current content on purpose: further families of search functions
+are expected, so each family lives in its own subpackage under `dev.jaaj.trino.search` and
+`SearchPlugin` is the only class at the root.
 
 The authoritative design document is
-[`docs/superpowers/specs/2026-08-05-trino-vector-plugin-design.md`](docs/superpowers/specs/2026-08-05-trino-vector-plugin-design.md).
+[`docs/superpowers/specs/2026-08-05-trino-search-plugin-design.md`](docs/superpowers/specs/2026-08-05-trino-search-plugin-design.md).
 Read it before changing behavior: it records the edge-case semantics (null handling, zero
 norms, dimension mismatches) that the tests pin down, and what is deliberately out of scope.
 
@@ -34,7 +39,7 @@ modernizer enforce most of the Trino code style on build. Rules the tooling does
 - Braces around single-statement `if` / `for` / `while` bodies.
 - No `@author` in JavaDoc - the commit history is the record.
 - Apache license header on every source file.
-- Root package is `dev.jaaj.trino.vector`. Never `io.trino.*`: that groupId belongs to the
+- Root package is `dev.jaaj.trino.search`. Never `io.trino.*`: that groupId belongs to the
   Trino project, and a split package would break the isolated plugin classloader.
 - Code, comments, commit messages and PR descriptions are written in English. Design documents
   in `docs/` are in French.

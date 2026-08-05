@@ -1,4 +1,4 @@
-# Design : plugin Trino `trino-vector` (v1, KNN exact)
+# Design : plugin Trino `trino-search` (v1, KNN exact)
 
 Date : 2026-08-05
 
@@ -59,15 +59,18 @@ LIMIT k`, avec un TopN distribué efficace.
 | Représentation | `array(double)` et `array(real)` natifs | zéro friction avec les données existantes |
 | Type custom | aucun | un `vector(n)` ne se justifie qu'avec un index qui stocke |
 | Cible | Trino 483, Java 25 | release publiée, donc partageable |
-| Nommage | `dev.jaaj.trino.vector` | groupId publiable, pas de split package avec l'amont |
+| Nommage | `dev.jaaj.trino.search` | groupId publiable, pas de split package avec l'amont |
 
 ## 3. Build et packaging
 
-Dépôt standalone (le dépôt git s'appelle `trino-knn`, l'artefact `trino-vector` : divergence
-assumée).
+Dépôt standalone : <https://github.com/JaaJSoft/trino-search>.
+
+Le nom `trino-search` est volontairement plus large que le contenu de la v1 : le plugin a
+vocation à accueillir d'autres familles de fonctions de recherche. Les fonctions vectorielles
+vivent donc dans un sous-package `vector`, et non à la racine.
 
 - parent `io.airlift:airbase:395`, celui de Trino 483
-- `groupId` `dev.jaaj.trino`, `artifactId` `trino-vector`
+- `groupId` `dev.jaaj.trino`, `artifactId` `trino-search`
 - `<packaging>trino-plugin</packaging>` via `io.trino:trino-maven-plugin:20` avec
   `<extensions>true</extensions>`, qui génère `META-INF/services/io.trino.spi.Plugin` et
   l'arborescence de déploiement
@@ -87,19 +90,23 @@ héritée et **toutes les versions doivent être épinglées explicitement** dan
 ## 4. Architecture
 
 ```
-dev.jaaj.trino.vector
-├─ VectorPlugin              implements Plugin, ne remplit que getFunctions()
-├─ Metric                    enum L2, L2_SQUARED, COSINE, DOT_PRODUCT, L1
-├─ VectorMath                noyau de calcul, package-private, opère sur Block
-├─ VectorDistanceFunctions   les @ScalarFunction de distance
-├─ VectorFunctions           l2_norm, normalize_vector
-├─ VectorErrorCode           ErrorCodeSupplier
-└─ agg
-   ├─ KnnAggregation         @AggregationFunction("knn_agg")
-   ├─ KnnState               @AccumulatorStateMetadata
-   ├─ KnnStateFactory
-   └─ KnnStateSerializer
+dev.jaaj.trino.search
+├─ SearchPlugin                 implements Plugin, ne remplit que getFunctions()
+└─ vector
+   ├─ Metric                    enum EUCLIDEAN, EUCLIDEAN_SQUARED, COSINE, DOT_PRODUCT, MANHATTAN
+   ├─ VectorMath                noyau de calcul, package-private, opère sur Block
+   ├─ VectorDistanceFunctions   les @ScalarFunction de distance
+   ├─ VectorFunctions           l2_norm, normalize_vector
+   └─ knn
+      ├─ KnnAggregation         @AggregationFunction("knn_agg")
+      ├─ KnnState               @AccumulatorStateMetadata
+      ├─ KnnStateFactory
+      └─ KnnStateSerializer
 ```
+
+`SearchPlugin` est le seul membre de la racine : c'est le point d'entrée du `ServiceLoader`, et
+il agrège les fonctions de chaque famille. Ajouter une famille plus tard revient à créer un
+sous-package et une ligne dans `getFunctions()`.
 
 `VectorMath` est le **seul** endroit du plugin contenant une boucle de distance. Contrainte de
 design volontaire : un futur index ANN appellera ce même noyau, et une éventuelle vectorisation
@@ -272,15 +279,17 @@ modèle de `TestMLQueries` en amont : un vrai moteur Trino en mémoire, le plugi
 réel sur des `VALUES`. Couvre la résolution des surcharges `double` / `real`, les messages
 d'erreur, et tous les cas de bord de la section 7.
 
-**Niveau 3, test différentiel.** Sur données générées, `knn_agg(id, v, q, k, 'l2')` doit
-produire exactement le même résultat que `ORDER BY l2_distance(v, q) LIMIT k`. C'est le test qui
+**Niveau 3, test différentiel.** Sur données générées, `knn_agg(id, v, q, k, 'euclidean')` doit
+produire exactement le même résultat que `ORDER BY euclidean_distance(v, q) LIMIT k` (la
+fonction native, ce qui valide au passage que le plugin est d'accord avec le moteur). C'est le
+test qui
 attrape les erreurs de tas et de fusion, invisibles sur trois lignes écrites à la main.
 
 Un test force explicitement plusieurs splits afin que le chemin `@CombineFunction` soit
 réellement exercé : sur de petits jeux de données, Trino n'agrège que sur un seul worker et ce
 chemin n'est jamais emprunté.
 
-**Le tout premier test à écrire est celui du chargement du plugin** : installer `VectorPlugin`
+**Le tout premier test à écrire est celui du chargement du plugin** : installer `SearchPlugin`
 dans un `StandaloneQueryRunner` doit réussir. Il échoue immédiatement si une signature entre en
 collision avec une fonction native, ce qui est le mode de panne le plus coûteux du projet
 (serveur qui refuse de démarrer). Il coûte cinq lignes et couvre toutes les fonctions ajoutées
