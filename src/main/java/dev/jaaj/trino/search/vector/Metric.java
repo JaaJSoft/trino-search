@@ -1,0 +1,95 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package dev.jaaj.trino.search.vector;
+
+import io.trino.spi.TrinoException;
+import io.trino.spi.block.Block;
+
+import java.util.Locale;
+import java.util.stream.Stream;
+
+import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
+
+public enum Metric
+{
+    EUCLIDEAN("euclidean", false) {
+        @Override
+        public double compute(Block first, Block second, VectorReader reader)
+        {
+            return VectorMath.euclidean(first, second, reader);
+        }
+    },
+    EUCLIDEAN_SQUARED("euclidean_squared", false) {
+        @Override
+        public double compute(Block first, Block second, VectorReader reader)
+        {
+            return VectorMath.euclideanSquared(first, second, reader);
+        }
+    },
+    COSINE("cosine", false) {
+        @Override
+        public double compute(Block first, Block second, VectorReader reader)
+        {
+            return 1.0 - VectorMath.cosineSimilarity(first, second, reader);
+        }
+    },
+    DOT_PRODUCT("dot_product", true) {
+        @Override
+        public double compute(Block first, Block second, VectorReader reader)
+        {
+            return VectorMath.dotProduct(first, second, reader);
+        }
+    },
+    MANHATTAN("manhattan", false) {
+        @Override
+        public double compute(Block first, Block second, VectorReader reader)
+        {
+            return VectorMath.manhattan(first, second, reader);
+        }
+    };
+
+    private final String sqlName;
+    private final boolean higherIsCloser;
+
+    Metric(String sqlName, boolean higherIsCloser)
+    {
+        this.sqlName = sqlName;
+        this.higherIsCloser = higherIsCloser;
+    }
+
+    public abstract double compute(Block first, Block second, VectorReader reader);
+
+    /**
+     * Dot product is a similarity, every other metric is a distance. The heap needs the
+     * direction; the value handed back to the user is always the raw metric value.
+     */
+    public boolean higherIsCloser()
+    {
+        return higherIsCloser;
+    }
+
+    public static Metric fromName(String name)
+    {
+        String normalized = name.toLowerCase(Locale.ROOT);
+        for (Metric metric : values()) {
+            if (metric.sqlName.equals(normalized)) {
+                return metric;
+            }
+        }
+        throw new TrinoException(INVALID_FUNCTION_ARGUMENT,
+                "Unknown metric '%s', expected one of: %s".formatted(
+                        name,
+                        Stream.of(values()).map(metric -> metric.sqlName).toList()));
+    }
+}
