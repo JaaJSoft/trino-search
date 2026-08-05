@@ -21,16 +21,6 @@
         <dep.airlift.version>439</dep.airlift.version>
 
         <!--
-          trino-testing pulls trino-testing-containers transitively, whose testcontainers
-          and docker-java dependencies carry netty and docker-java-transport jars whose
-          versions the io.airlift bom does not align with trino's own root pom. Trino's
-          root pom works around this with hand-picked duplicate-finder exceptions; a
-          plugin skeleton has no equivalent inventory to maintain, so the check is
-          disabled instead of chasing every future transitive shift.
-        -->
-        <air.check.skip-duplicate-finder>true</air.check.skip-duplicate-finder>
-
-        <!--
           trino-main's BlockEncodingSimdSupport touches jdk.incubator.vector, an incubator
           module that is not on the module path unless requested explicitly. Trino's own
           root pom adds the same flag to its test JVM arguments.
@@ -122,6 +112,58 @@
                 <artifactId>trino-maven-plugin</artifactId>
                 <version>20</version>
                 <extensions>true</extensions>
+            </plugin>
+
+            <!--
+              trino-testing pulls in trino-exchange-filesystem (test scope), whose azure,
+              AWS and reactor-netty client dependencies each carry their own netty release,
+              and docker-java's transport clashes with the httpclient5 copy of the public
+              suffix list. Both pairs are scoped exceptions here, following the pattern
+              Trino's own root pom uses for the same kind of transitive-dependency overlap
+              (see io.trino:trino:pom:483, duplicate-finder-maven-plugin configuration).
+            -->
+            <plugin>
+                <groupId>org.basepom.maven</groupId>
+                <artifactId>duplicate-finder-maven-plugin</artifactId>
+                <configuration>
+                    <exceptions>
+                        <exception>
+                            <conflictingDependencies>
+                                <dependency>
+                                    <groupId>io.netty</groupId>
+                                    <artifactId>netty-codec-base</artifactId>
+                                </dependency>
+                                <dependency>
+                                    <groupId>io.netty</groupId>
+                                    <artifactId>netty-codec</artifactId>
+                                </dependency>
+                            </conflictingDependencies>
+                            <packages>
+                                <package>io.netty.handler.codec</package>
+                                <package>io.netty.handler.codec.base64</package>
+                                <package>io.netty.handler.codec.bytes</package>
+                                <package>io.netty.handler.codec.json</package>
+                                <package>io.netty.handler.codec.serialization</package>
+                                <package>io.netty.handler.codec.string</package>
+                            </packages>
+                        </exception>
+                        <exception>
+                            <conflictingDependencies>
+                                <dependency>
+                                    <groupId>com.github.docker-java</groupId>
+                                    <artifactId>docker-java-transport-zerodep</artifactId>
+                                </dependency>
+                                <dependency>
+                                    <groupId>org.apache.httpcomponents.client5</groupId>
+                                    <artifactId>httpclient5</artifactId>
+                                </dependency>
+                            </conflictingDependencies>
+                            <resources>
+                                <resource>org/publicsuffix/list/effective_tld_names.dat</resource>
+                            </resources>
+                        </exception>
+                    </exceptions>
+                </configuration>
             </plugin>
         </plugins>
     </build>
