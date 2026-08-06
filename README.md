@@ -1,101 +1,62 @@
 # trino-search
 
-Plugin [Trino](https://trino.io) de fonctions de recherche. La première famille couvre les
-vecteurs : distances, normalisation et recherche des k plus proches voisins (KNN) exacte,
-directement en SQL.
+[Trino](https://trino.io) plugin providing search functions. The first family covers vectors:
+distance metrics, normalization and exact k-nearest-neighbour search.
 
-<https://github.com/JaaJSoft/trino-search>
+The plugin exposes functions only, no catalog and no connector: dropping the JAR into the
+plugin directory makes the functions available globally.
 
-Le plugin n'expose que des fonctions. Il ne définit ni catalogue ni connecteur : une fois le
-JAR déposé dans le répertoire des plugins, les fonctions sont disponibles globalement, sur
-n'importe quel catalogue.
+## Functions
 
-## Fonctions
+Vectors are `array(double)` or `array(real)`. No custom type, no `CAST`.
 
-Les vecteurs sont des `array(double)` ou des `array(real)`. Aucun type custom, aucun `CAST`.
+### Metrics
 
-Trino fournit déjà nativement `euclidean_distance`, `dot_product`, `cosine_similarity` et
-`cosine_distance`, mais uniquement sur `array(double)`. Le plugin ne les réimplémente pas : il
-en ajoute les surcharges `array(real)` et complète ce qui manque.
-
-### Nouvelles métriques
-
-| Fonction | Description |
+| Function | Description |
 | --- | --- |
-| `euclidean_squared_distance(x, y)` | carré de la distance euclidienne (même ordre de tri, sans `sqrt`) |
-| `manhattan_distance(x, y)` | distance L1 |
-| `l2_norm(x)` | norme euclidienne |
-| `normalize_vector(x)` | vecteur normalise (norme 1), du meme type que l'entree |
+| `euclidean_squared_distance(x, y)` | squared euclidean distance, without the `sqrt` |
+| `manhattan_distance(x, y)` | L1 distance |
+| `l2_norm(x)` | euclidean norm |
+| `normalize_vector(x)` | unit-norm vector, of the same type as the input |
 
-### Surcharges `array(real)`
+Trino already ships `euclidean_distance`, `dot_product`, `cosine_similarity` and
+`cosine_distance`, but only on `array(double)`. This plugin adds the `array(real)` overloads
+under the same names, so an `array(real)` column does not need a `CAST` that would double the
+memory read per row.
 
-`euclidean_distance`, `dot_product`, `cosine_similarity` et `cosine_distance` deviennent
-utilisables directement sur des colonnes `array(real)`, sans `CAST` vers `array(double)` qui
-doublerait l'empreinte memoire.
+> One consequence: an untyped decimal literal such as `ARRAY[0.1, 0.2]` binds to the
+> `array(real)` overload, with the matching precision and `NULL` handling. A genuinely typed
+> `array(double)` column, an explicit `CAST` or `DOUBLE 'x'` literals all keep the engine's
+> native implementation.
 
-#### Résolution de surcharge sur un littéral non typé
-
-Le plugin réutilise volontairement les noms natifs (`euclidean_distance`, `dot_product`,
-`cosine_similarity`, `cosine_distance`) plutôt que des noms distincts, pour qu'une requête écrite
-pour une colonne `array(double)` fonctionne sans modification sur une colonne `array(real)`.
-
-Une conséquence : un littéral décimal non typé comme `ARRAY[0.1, 0.2]` se lie désormais à la
-surcharge `array(real)` du plugin, pas à l'implémentation native `array(double)` du moteur (Trino
-préfère la coercition la plus étroite quand plusieurs surcharges sont applicables par coercition).
-Cela affecte deux choses :
-
-- **La précision** : les éléments sont lus en float32 avant le calcul, ce qui donne un résultat
-  légèrement différent du calcul natif en double précision.
-- **Le traitement des `NULL`** : la surcharge `array(real)` renvoie `NULL` si un élément du
-  tableau est `NULL`, alors que l'implémentation native `array(double)` lit un `NULL` comme `0.0`.
-
-Ce comportement ne concerne que les littéraux non typés, utilisés en pratique surtout pour des
-tests ou des requêtes ad hoc. Une colonne réellement typée `array(double)`, un `CAST(... AS
-array(double))` explicite, ou des littéraux `DOUBLE 'x'`, se lient tous à l'implémentation native
-et conservent son comportement (précision double, `NULL` lu comme `0.0`).
-
-### Agrégation
+### Aggregation
 
 ```sql
 knn_agg(key, vector, query_vector, k, metric) -> array(row(key, distance))
 ```
 
-Renvoie les `k` plus proches voisins de `query_vector` **par groupe**, triés du plus proche au
-plus lointain. `metric` vaut `'euclidean'`, `'euclidean_squared'`, `'cosine'`, `'dot_product'`
-ou `'manhattan'`.
+Returns the `k` nearest neighbours of `query_vector` **per group**, nearest first. `metric` is
+one of `'euclidean'`, `'euclidean_squared'`, `'cosine'`, `'dot_product'` or `'manhattan'`. `k`
+is capped at 10000, and both `k` and `metric` must be constant within a group.
 
-`knn_agg` est elle aussi soumise à la résolution de surcharge décrite ci-dessus : un littéral
-décimal non typé comme `ARRAY[0.1, 0.2]` passé en `vector` ou `query_vector` se lie à la
-surcharge `array(real)`, pas `array(double)`.
-
-`k` et `metric` doivent rester constants au sein d'un même groupe : une valeur qui varie d'une
-ligne à l'autre est rejetée avec une erreur plutôt que d'être résolue silencieusement par
-« première ligne gagnante ».
-
-## Exemples
-
-Top 10 global sur une colonne `array(real)`, grace a la surcharge ajoutee par le plugin :
+## Examples
 
 ```sql
+-- global top 10 over an array(real) column
 SELECT id, euclidean_distance(embedding, ARRAY[REAL '0.1', REAL '0.2', REAL '0.3']) AS distance
 FROM documents
 ORDER BY distance
 LIMIT 10;
-```
 
-Top 3 par catégorie, avec l'agrégation :
-
-```sql
-SELECT category,
-       knn_agg(id, embedding, ARRAY[0.1, 0.2, 0.3], 3, 'cosine') AS neighbors
+-- top 3 per category
+SELECT category, knn_agg(id, embedding, ARRAY[0.1, 0.2, 0.3], 3, 'cosine') AS neighbors
 FROM documents
 GROUP BY category;
 ```
 
-## Compatibilité
+## Compatibility
 
-- Trino 483
-- Java 25
+Trino 483, Java 25.
 
 ## Installation
 
@@ -103,14 +64,13 @@ GROUP BY category;
 ./mvnw clean package
 ```
 
-Copier le contenu de `target/trino-search-<version>/` dans `<trino>/plugin/search/`, puis
-redémarrer le serveur.
+Copy the contents of `target/trino-search-<version>/` into `<trino>/plugin/search/`, then
+restart the server.
 
-## État du projet
+## Status
 
-La v1 implémente le KNN **exact**. La recherche approximative (ANN) est prévue, mais n'est pas
-encore implémentée.
+v1 implements exact KNN. Approximate search (ANN) is planned.
 
-## Licence
+## License
 
 Apache License 2.0

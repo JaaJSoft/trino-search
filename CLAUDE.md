@@ -48,8 +48,8 @@ modernizer enforce most of the Trino code style on build. Rules the tooling does
 - Apache license header on every source file.
 - Root package is `dev.jaaj.trino.search`. Never `io.trino.*`: that groupId belongs to the
   Trino project, and a split package would break the isolated plugin classloader.
-- Code, comments, commit messages and PR descriptions are written in English. `README.md` is in
-  French.
+- Everything is written in English: code, comments, commit messages, PR descriptions, issues
+  and `README.md`.
 
 ## Testing
 
