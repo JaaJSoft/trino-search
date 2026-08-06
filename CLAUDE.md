@@ -22,13 +22,6 @@ and this file belong here.
 
 ## Build
 
-Maven is not installed system-wide; use the committed wrapper. `JAVA_HOME` points at JDK 8 on
-this machine, so **every** build command must select JDK 25 explicitly:
-
-```bash
-JAVA_HOME="C:\Program Files\Eclipse Adoptium\jdk-25.0.1.8-hotspot" ./mvnw clean verify
-```
-
 Trino 483 requires Java 25. A build that silently picks up JDK 8 fails on `air.java.version`.
 
 Run a single test class:
