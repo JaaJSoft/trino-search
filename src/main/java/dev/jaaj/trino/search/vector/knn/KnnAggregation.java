@@ -34,14 +34,11 @@ import io.trino.spi.function.SqlNullable;
 import io.trino.spi.function.SqlType;
 import io.trino.spi.function.TypeParameter;
 import io.trino.spi.type.StandardTypes;
-import io.trino.spi.type.Type;
 
 import static dev.jaaj.trino.search.vector.VectorReader.DOUBLE_READER;
 import static dev.jaaj.trino.search.vector.VectorReader.REAL_READER;
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static io.trino.spi.type.DoubleType.DOUBLE;
-import static io.trino.spi.type.TypeUtils.readNativeValue;
-import static io.trino.spi.type.TypeUtils.writeNativeValue;
 
 /**
  * Returns the k nearest neighbours of a query vector within each group.
@@ -78,7 +75,6 @@ public final class KnnAggregation
         @InputFunction
         @TypeParameter("K")
         public static void input(
-                @TypeParameter("K") Type keyType,
                 @AggregationState("K") KnnState state,
                 @SqlNullable @BlockPosition @SqlType("K") ValueBlock key,
                 @BlockIndex int position,
@@ -87,7 +83,7 @@ public final class KnnAggregation
                 @SqlType(StandardTypes.BIGINT) long k,
                 @SqlType(StandardTypes.VARCHAR) Slice metricName)
         {
-            addCandidate(state, keyType, key, position, vector, queryVector, k, metricName, DOUBLE_READER);
+            addCandidate(state, key, position, vector, queryVector, k, metricName, DOUBLE_READER);
         }
 
         @CombineFunction
@@ -101,11 +97,10 @@ public final class KnnAggregation
         @SqlNullable
         @OutputFunction("array(row(K, double))")
         public static void output(
-                @TypeParameter("K") Type keyType,
                 @AggregationState("K") KnnState state,
                 BlockBuilder out)
         {
-            writeResult(keyType, state, out);
+            writeResult(state, out);
         }
     }
 
@@ -118,7 +113,6 @@ public final class KnnAggregation
         @InputFunction
         @TypeParameter("K")
         public static void input(
-                @TypeParameter("K") Type keyType,
                 @AggregationState("K") KnnState state,
                 @SqlNullable @BlockPosition @SqlType("K") ValueBlock key,
                 @BlockIndex int position,
@@ -127,7 +121,7 @@ public final class KnnAggregation
                 @SqlType(StandardTypes.BIGINT) long k,
                 @SqlType(StandardTypes.VARCHAR) Slice metricName)
         {
-            addCandidate(state, keyType, key, position, vector, queryVector, k, metricName, REAL_READER);
+            addCandidate(state, key, position, vector, queryVector, k, metricName, REAL_READER);
         }
 
         @CombineFunction
@@ -141,17 +135,15 @@ public final class KnnAggregation
         @SqlNullable
         @OutputFunction("array(row(K, double))")
         public static void output(
-                @TypeParameter("K") Type keyType,
                 @AggregationState("K") KnnState state,
                 BlockBuilder out)
         {
-            writeResult(keyType, state, out);
+            writeResult(state, out);
         }
     }
 
     private static void addCandidate(
             KnnState state,
-            Type keyType,
             ValueBlock key,
             int position,
             Block vector,
@@ -188,7 +180,7 @@ public final class KnnAggregation
             return;
         }
 
-        heap.add(readNativeValue(keyType, key, position), metric.compute(vector, queryVector, reader));
+        heap.add(key, position, metric.compute(vector, queryVector, reader));
     }
 
     private static void mergeStates(KnnState state, KnnState otherState)
@@ -229,7 +221,7 @@ public final class KnnAggregation
         }
     }
 
-    private static void writeResult(Type keyType, KnnState state, BlockBuilder out)
+    private static void writeResult(KnnState state, BlockBuilder out)
     {
         KnnHeap heap = state.getHeap();
         if (heap == null || heap.size() == 0) {
@@ -240,7 +232,7 @@ public final class KnnAggregation
         ((ArrayBlockBuilder) out).buildEntry(elementBuilder -> {
             for (KnnHeap.Neighbour neighbour : heap.drainSorted()) {
                 ((RowBlockBuilder) elementBuilder).buildEntry(fieldBuilders -> {
-                    writeNativeValue(keyType, fieldBuilders.get(0), neighbour.key());
+                    fieldBuilders.get(0).append(neighbour.key(), 0);
                     DOUBLE.writeDouble(fieldBuilders.get(1), neighbour.distance());
                 });
             }

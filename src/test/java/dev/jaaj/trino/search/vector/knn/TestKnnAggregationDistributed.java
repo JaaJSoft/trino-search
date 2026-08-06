@@ -123,6 +123,39 @@ public class TestKnnAggregationDistributed
         assertEqualsIgnoreOrder(actual, expected);
     }
 
+    /**
+     * An {@code array} or {@code row} key is the case where the serialized state carries a nested
+     * value rather than a flat one, so it is also the case where a neighbour rebuilt on the final
+     * aggregation could come back attached to the wrong position of the intermediate block.
+     */
+    @Test
+    public void testArrayKeysAcrossSplits()
+    {
+        MaterializedResult actual = computeActual(
+                """
+                SELECT transform(knn_agg(ARRAY[orderkey], ARRAY[CAST(orderkey AS double), 0.0], ARRAY[0.0, 0.0], 10, 'euclidean'), x -> x[1][1])
+                FROM tpch.tiny.orders
+                """);
+        MaterializedResult expected = computeActual(
+                "SELECT array_agg(orderkey ORDER BY orderkey) FROM (SELECT orderkey FROM tpch.tiny.orders ORDER BY orderkey LIMIT 10)");
+        assertEqualsIgnoreOrder(actual, expected);
+    }
+
+    @Test
+    public void testRowKeysAcrossSplits()
+    {
+        MaterializedResult actual = computeActual(
+                """
+                SELECT transform(
+                        knn_agg(CAST(ROW(orderkey) AS row(id bigint)), ARRAY[CAST(orderkey AS double), 0.0], ARRAY[0.0, 0.0], 10, 'euclidean'),
+                        x -> x[1].id)
+                FROM tpch.tiny.orders
+                """);
+        MaterializedResult expected = computeActual(
+                "SELECT array_agg(orderkey ORDER BY orderkey) FROM (SELECT orderkey FROM tpch.tiny.orders ORDER BY orderkey LIMIT 10)");
+        assertEqualsIgnoreOrder(actual, expected);
+    }
+
     @Test
     public void testCosineMetricMatchesTheNativeFunctionAcrossSplits()
     {
