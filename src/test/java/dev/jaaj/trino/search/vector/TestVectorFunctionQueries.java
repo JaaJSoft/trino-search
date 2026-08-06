@@ -131,4 +131,46 @@ public class TestVectorFunctionQueries
         assertQuery("SELECT euclidean_squared_distance(ARRAY[], ARRAY[])", "SELECT 0.0");
         assertQuery("SELECT l2_norm(CAST(ARRAY[] AS array(double)))", "SELECT 0.0");
     }
+
+    @Test
+    public void testEuclideanSquaredDistanceOnDoubleOverload()
+    {
+        // An untyped decimal array literal binds to the array(real) overload (see
+        // testNormalizeVectorUncastFormNowBindsToRealOverload), so every other test in this class
+        // that uses ARRAY[0.0, 0.0]-style literals for euclidean_squared_distance, manhattan_distance
+        // and l2_norm never exercises their array(double) path: 0.0, 3.0, 4.0, 1.0, -2.0 and 2.0 are
+        // all exactly representable in float32, so those tests pass identically whichever reader
+        // computes them. The explicit CAST here forces exact-match resolution to the array(double)
+        // overload, and 0.1/0.2/0.3/0.4 are not exact in float32, so DOUBLE_READER and REAL_READER
+        // disagree measurably: this pins that the array(double) overload actually reads through
+        // DOUBLE_READER. assertQuery is not used because it rounds to 5 significant digits, which
+        // would hide the gap between the double-precision and float32-widened results.
+        assertThat(actualDouble(
+                "SELECT euclidean_squared_distance(CAST(ARRAY[0.1, 0.2] AS array(double)), CAST(ARRAY[0.3, 0.4] AS array(double)))"))
+                .isCloseTo(0.08, within(1e-9));
+    }
+
+    @Test
+    public void testManhattanDistanceOnDoubleOverload()
+    {
+        // See testEuclideanSquaredDistanceOnDoubleOverload for why the CAST and the tolerance-based
+        // assertion are needed to actually exercise DOUBLE_READER.
+        assertThat(actualDouble(
+                "SELECT manhattan_distance(CAST(ARRAY[0.1, 0.2] AS array(double)), CAST(ARRAY[0.3, 0.4] AS array(double)))"))
+                .isCloseTo(0.4, within(1e-9));
+    }
+
+    @Test
+    public void testL2NormOnDoubleOverload()
+    {
+        // See testEuclideanSquaredDistanceOnDoubleOverload for why the CAST and the tolerance-based
+        // assertion are needed to actually exercise DOUBLE_READER.
+        assertThat(actualDouble("SELECT l2_norm(CAST(ARRAY[0.1, 0.2] AS array(double)))"))
+                .isCloseTo(0.223606797749979, within(1e-9));
+    }
+
+    private double actualDouble(String sql)
+    {
+        return (double) (Double) computeActual(sql).getOnlyValue();
+    }
 }
