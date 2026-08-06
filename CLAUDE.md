@@ -62,28 +62,27 @@ Three levels, all of which matter:
 the serialize/combine cycle entirely, so a broken `@CombineFunction` or an incomplete
 serialized state passes every naive test and produces wrong results in production.
 
+## Git
+
+- Committing on your own initiative (without being asked) is fine, as long as the current branch is not `master`/`main`.
+- **Forbidden: commit to `master`/`main`.** These branches are protected - no direct commits ever, even if explicitly requested. If we're on `master`/`main` and a commit is warranted, create a feature branch first (`type/short-subject`, e.g. `feat/theme-picker`) and commit there. **Committing to any other branch has no restrictions.**
+- Git worktrees are allowed - use one when isolating work from the current workspace is useful. Otherwise work directly on the current branch (creating a feature branch when the current branch is `master`/`main`, per the rule above).
+- Never mention "Claude", "Claude Code", "CLAUDE.md", or any AI/assistant attribution in commit messages, commit titles, PR titles, or PR descriptions. The user wants commits and PRs to read as if a human wrote them. This includes the trailing "🤖 Generated with [Claude Code]" footer and the "Co-Authored-By: Claude" trailer - omit both. References to project rules should cite the rule itself ("per the no-logic-change refactor contract"), not the file ("per CLAUDE.md").
+- All commit messages **and** PR titles must follow the Conventional Commits format `type(scope): subject` (e.g. `feat(theme): split theme picker into light and dark slots`, `fix(chat): prevent duplicate retry`). Allowed types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `style`, `build`, `ci`, `revert`. Subject is lowercase, imperative mood, no trailing period. This applies to PR titles too - don't pass a free-form title to `gh pr create`, prefix it.
+
 ## PR Descriptions
 
-PR descriptions must follow the structure of `.github/PULL_REQUEST_TEMPLATE.md` (Summary /
-Changes / Screenshots / Testing / Notes). GitHub only pre-fills that template when no body is
-provided, and `gh pr create --body` bypasses it, so when writing a body, reproduce the
-structure manually. Rules:
+PR descriptions must follow the structure of `.github/PULL_REQUEST_TEMPLATE.md` (Summary / Changes / Screenshots / Testing / Notes). GitHub only pre-fills that template when no body is provided, and `gh pr create --body` bypasses it - so when writing a body, reproduce the structure manually. Rules:
 
-- Write for a human reviewer and for whoever reads the PR in a year. Explain intent and impact;
-  never paraphrase the diff line by line - the diff is right below.
+- Write for a human reviewer and for whoever reads the PR in a year. Explain intent and impact; never paraphrase the diff line by line - the diff is right below.
 - `Summary` is mandatory: 2-5 sentences, outcome first, approach only if non-obvious.
-- Every other section is optional - **delete** sections that don't apply, never leave empty
-  headings or "N/A". Small PRs often need only `Summary` and `Testing`.
-- `Changes` lists only what a reviewer needs to navigate the diff. Omit mechanical fallout
-  (renames, import updates, generated files, "updated tests accordingly") and process narration
-  ("verified X still works", "explored Y before choosing Z").
-- `Testing` is factual: suites run with results, what new regression tests pin down, manual
-  checks performed. No checklists, no ✅ theater.
-- `Notes` only when there is real content: breaking changes, known limitations, deliberate
-  follow-ups, review focus areas.
-- The PR is the project's public face: no internal tooling details and no self-congratulation.
+- Every other section is optional - **delete** sections that don't apply, never leave empty headings or "N/A". Small PRs often need only `Summary` and `Testing`.
+- `Changes` lists only what a reviewer needs to navigate the diff. Omit mechanical fallout (renames, import updates, generated files, "updated tests accordingly") and process narration ("verified X still works", "explored Y before choosing Z").
+- `Testing` is factual: suites run with results, what new regression tests pin down, manual checks performed. No checklists, no ✅ theater.
+- `Notes` only when there is real content: breaking changes, known limitations, deliberate follow-ups, review focus areas.
+- The PR is the project's public face: no internal tooling details, no self-congratulation, and (per the attribution rule above) nothing that reads as machine-generated.
 
-### Voice and attribution
+## Voice and attribution
 
 Commit messages and PR bodies are written in the project's voice: plain declarative English,
 explaining intent rather than narrating the authoring process. Tooling trailers such as
