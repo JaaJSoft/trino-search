@@ -1,4 +1,4 @@
-# trino-search
+# Trino-search
 
 [Trino](https://trino.io) plugin providing search functions. The first family covers vectors:
 distance metrics, normalization and exact k-nearest-neighbour search.
