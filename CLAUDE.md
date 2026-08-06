@@ -94,7 +94,7 @@ structure manually. Rules:
 
 Commit messages and PR bodies are written in the project's voice: plain declarative English,
 explaining intent rather than narrating the authoring process. Tooling trailers such as
-`Co-Authored-By` are fine; prose that reads as a machine describing its own work is not.
+`Co-Authored-By` are forbiden; and prose that reads as a machine describing its own work is not.
 
 ## Backward Compatibility
 
