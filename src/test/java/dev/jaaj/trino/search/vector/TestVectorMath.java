@@ -166,6 +166,18 @@ public class TestVectorMath
     }
 
     @Test
+    public void testCosineSimilarityAgainstAZeroVectorWhoseCounterpartOverflows()
+    {
+        // an infinite magnitude times a zero one is NaN, which is neither zero nor infinite
+        assertThatThrownBy(() -> VectorMath.cosineSimilarity(doubles(1e200), doubles(0.0), DOUBLE_READER))
+                .isInstanceOf(TrinoException.class)
+                .hasMessageContaining("Vector magnitude cannot be zero");
+        assertThatThrownBy(() -> VectorMath.cosineSimilarity(doubles(0.0), doubles(1e200), DOUBLE_READER))
+                .isInstanceOf(TrinoException.class)
+                .hasMessageContaining("Vector magnitude cannot be zero");
+    }
+
+    @Test
     public void testNormWhenTheSumOfSquaresOverflows()
     {
         assertThat(VectorMath.norm(doubles(1e200, 1e200), DOUBLE_READER))

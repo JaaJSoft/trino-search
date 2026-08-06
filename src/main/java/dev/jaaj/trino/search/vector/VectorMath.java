@@ -97,8 +97,11 @@ final class VectorMath
         // vectors themselves, only about the accumulation. Rescale before concluding anything.
         // Splitting into sqrt(a) * sqrt(b) would avoid the overflow without a second pass, but
         // it loses the exactness that makes two identical vectors return exactly 1.
+        // NaN covers an infinite magnitude meeting a zero one, which is neither of the above and
+        // must still be reported as a zero magnitude rather than returned as NaN.
         double magnitudeProduct = firstMagnitude * secondMagnitude;
-        if (magnitudeProduct == 0 || Double.isInfinite(magnitudeProduct) || Double.isInfinite(dotProduct)) {
+        if (magnitudeProduct == 0 || Double.isInfinite(magnitudeProduct) || Double.isNaN(magnitudeProduct)
+                || Double.isInfinite(dotProduct)) {
             return scaledCosineSimilarity(first, second, reader);
         }
         return dotProduct / Math.sqrt(magnitudeProduct);
