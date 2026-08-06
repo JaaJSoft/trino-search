@@ -1,0 +1,4 @@
+# The airstyle plugin reads source files as raw bytes and fails the build on CRLF, while
+# Git for Windows enables core.autocrlf by default. Without this file a fresh clone on
+# Windows converts every source file to CRLF and `./mvnw verify` fails before compiling.
+* text=auto eol=lf
