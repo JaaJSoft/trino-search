@@ -13,6 +13,18 @@ The authoritative design document is
 Read it before changing behavior: it records the edge-case semantics (null handling, zero
 norms, dimension mismatches) that the tests pin down, and what is deliberately out of scope.
 
+## Workflow artifacts are never committed
+
+Implementation plans, task briefs, progress ledgers and subagent reports stay out of git. They
+are scratch: they date the moment the code lands, they contain listings that were corrected
+during implementation, and in a public repository they leak internal tooling names and local
+machine paths. `.superpowers/` and `docs/superpowers/plans/` are gitignored, and must stay that
+way.
+
+Design documents under `docs/superpowers/specs/` are the exception and do belong in git: they
+record the edge-case semantics the tests pin down and the reasoning behind them, which is
+project knowledge rather than process bookkeeping.
+
 ## Build
 
 Maven is not installed system-wide; use the committed wrapper. `JAVA_HOME` points at JDK 8 on
