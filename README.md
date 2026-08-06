@@ -68,6 +68,10 @@ ou `'manhattan'`.
 décimal non typé comme `ARRAY[0.1, 0.2]` passé en `vector` ou `query_vector` se lie à la
 surcharge `array(real)`, pas `array(double)`.
 
+`k` et `metric` doivent rester constants au sein d'un même groupe : une valeur qui varie d'une
+ligne à l'autre est rejetée avec une erreur plutôt que d'être résolue silencieusement par
+« première ligne gagnante ».
+
 ## Exemples
 
 Top 10 global sur une colonne `array(real)`, grace a la surcharge ajoutee par le plugin :

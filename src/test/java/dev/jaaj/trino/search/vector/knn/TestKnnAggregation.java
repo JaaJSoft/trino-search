@@ -119,6 +119,22 @@ public class TestKnnAggregation
     }
 
     @Test
+    public void testKAboveTheCapIsRejected()
+    {
+        assertQueryFails(
+                "SELECT knn_agg(id, v, ARRAY[0.0, 0.0], 10001, 'euclidean') FROM " + POINTS,
+                ".*k of knn_agg must be less than or equal to 10000; found 10001.*");
+    }
+
+    @Test
+    public void testKAtTheCapIsAccepted()
+    {
+        assertQuery(
+                "SELECT cardinality(knn_agg(id, v, ARRAY[0.0, 0.0], 10000, 'euclidean')) FROM " + POINTS,
+                "SELECT 4");
+    }
+
+    @Test
     public void testUnknownMetricIsRejected()
     {
         assertQueryFails(
@@ -276,5 +292,21 @@ public class TestKnnAggregation
         assertQueryFails(
                 "SELECT knn_agg(id, v, ARRAY[0.0], 2, 'euclidean') FROM " + POINTS,
                 ".*The arguments must have the same length.*");
+    }
+
+    @Test
+    public void testVaryingKWithinAGroupIsRejected()
+    {
+        assertQueryFails(
+                "SELECT knn_agg(id, v, ARRAY[0.0, 0.0], CASE WHEN id = 'a' THEN 1 ELSE 2 END, 'euclidean') FROM " + POINTS,
+                ".*k must be constant within a group of knn_agg.*");
+    }
+
+    @Test
+    public void testVaryingMetricWithinAGroupIsRejected()
+    {
+        assertQueryFails(
+                "SELECT knn_agg(id, v, ARRAY[0.0, 0.0], 2, CASE WHEN id = 'a' THEN 'dot_product' ELSE 'euclidean' END) FROM " + POINTS,
+                ".*metric must be constant within a group of knn_agg.*");
     }
 }

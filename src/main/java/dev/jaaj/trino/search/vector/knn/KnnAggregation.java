@@ -47,19 +47,26 @@ import static io.trino.spi.type.TypeUtils.writeNativeValue;
  * Returns the k nearest neighbours of a query vector within each group.
  * <p>
  * The engine requires every {@code @InputFunction} that shares an open type variable (here
- * {@code K}, the neighbour key) to resolve to an identical signature, so a single generic
- * aggregation class cannot host both the {@code array(double)} and {@code array(real)} vector
- * overloads: the concrete {@code array(double)}/{@code array(real)} argument types collide with
- * that "one signature per open type variable" rule even though {@code K} itself stays open. Real
- * Trino code hits the same wall for {@code qdigest_agg} (see
- * {@code io.trino.operator.aggregation.QuantileDigestAggregationFunction}, which is not double
- * vs. real but double vs. real vs. bigint) and solves it the same way used here: an outer,
- * non-registered class holds one {@code @AggregationFunction}-annotated nested class per concrete
- * overload, each with its own input/combine/output methods, delegating to shared private helpers
- * on the outer class so the two overloads do not duplicate logic.
+ * {@code K}, the neighbour key) to resolve to an identical signature
+ * ({@code ParametricImplementationsGroup.determineGenericSignature}, via
+ * {@code FunctionsParserHelper.validateSignaturesCompatibility}), so a single generic aggregation
+ * class cannot host both the {@code array(double)} and {@code array(real)} vector overloads: the
+ * concrete {@code array(double)}/{@code array(real)} argument types collide with that "one
+ * signature per open type variable" rule even though {@code K} itself stays open. The fix is an
+ * outer, non-registered class holding one {@code @AggregationFunction}-annotated nested class per
+ * concrete overload, each with its own input/combine/output methods, delegating to shared private
+ * helpers on the outer class so the two overloads do not duplicate logic.
  */
 public final class KnnAggregation
 {
+    /**
+     * Mirrors the cap Trino's own {@code min_n}/{@code max_n} family enforces in
+     * {@code io.trino.operator.aggregation.minmaxn.MinNStateFactory}: an unbounded k would let
+     * {@link KnnHeap}'s constructor eagerly allocate {@code k}-sized arrays before any input row
+     * is seen, which a large enough k turns into an out-of-memory kill of the worker process.
+     */
+    static final int MAX_K = 10_000;
+
     private KnnAggregation() {}
 
     @AggregationFunction("knn_agg")
@@ -156,8 +163,10 @@ public final class KnnAggregation
         if (k <= 0) {
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "k must be greater than zero, got " + k);
         }
-        if (k > Integer.MAX_VALUE) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "k is too large: " + k);
+        if (k > MAX_K) {
+            throw new TrinoException(
+                    INVALID_FUNCTION_ARGUMENT,
+                    "k of knn_agg must be less than or equal to %s; found %s".formatted(MAX_K, k));
         }
 
         Metric metric = Metric.fromName(metricName.toStringUtf8());
@@ -167,6 +176,9 @@ public final class KnnAggregation
             state.setHeap(heap);
             state.setK((int) k);
             state.setMetricName(metricName.toStringUtf8());
+        }
+        else {
+            checkConstantWithinGroup(state.getK(), (int) k, state.getMetricName(), metricName.toStringUtf8());
         }
 
         if (vector.getPositionCount() != queryVector.getPositionCount()) {
@@ -192,7 +204,29 @@ public final class KnnAggregation
             state.setMetricName(otherState.getMetricName());
             return;
         }
+        checkConstantWithinGroup(state.getK(), otherState.getK(), state.getMetricName(), otherState.getMetricName());
         heap.mergeFrom(other);
+    }
+
+    /**
+     * The heap is created from whichever row or partial state reaches this code first, so a
+     * varying k or metric within the same group would otherwise be resolved silently by "first
+     * one wins": the heap keeps ranking every later candidate by the first row's direction
+     * (closer-is-smaller vs. closer-is-larger), which for a mismatched metric returns the
+     * farthest neighbours under a plausible-looking label instead of failing.
+     */
+    private static void checkConstantWithinGroup(int k, int otherK, String metricName, String otherMetricName)
+    {
+        if (k != otherK) {
+            throw new TrinoException(
+                    INVALID_FUNCTION_ARGUMENT,
+                    "k must be constant within a group of knn_agg, found %s and %s".formatted(k, otherK));
+        }
+        if (Metric.fromName(metricName) != Metric.fromName(otherMetricName)) {
+            throw new TrinoException(
+                    INVALID_FUNCTION_ARGUMENT,
+                    "metric must be constant within a group of knn_agg, found '%s' and '%s'".formatted(metricName, otherMetricName));
+        }
     }
 
     private static void writeResult(Type keyType, KnnState state, BlockBuilder out)
