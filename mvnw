@@ -177,6 +177,11 @@ verbose "Downloading to: $TMP_DOWNLOAD_DIR/$distributionUrlName"
 
 # select .zip or .tar.gz
 if ! command -v unzip >/dev/null; then
+  # distributionSha256Sum pins the .zip, so falling back to the .tar.gz would compare the
+  # wrong archive and fail with a misleading "distribution might be compromised" message.
+  if [ -n "${distributionSha256Sum-}" ]; then
+    die "unzip is not available, and distributionSha256Sum pins the .zip distribution. Install unzip, or remove distributionSha256Sum from .mvn/wrapper/maven-wrapper.properties to allow the .tar.gz fallback."
+  fi
   distributionUrl="${distributionUrl%.zip}.tar.gz"
   distributionUrlName="${distributionUrl##*/}"
 fi
