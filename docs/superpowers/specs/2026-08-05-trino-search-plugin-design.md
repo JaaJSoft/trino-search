@@ -78,11 +78,14 @@ vivent donc dans un sous-package `vector`, et non à la racine.
 - Maven Wrapper (`mvnw`) committé dans le dépôt
 
 Dépendances, en `provided` (fournies par le serveur, jamais embarquées) :
-`io.trino:trino-spi`, `io.airlift:slice`.
-En `compile` : `com.google.guava:guava`, `io.trino:trino-array` (pour `ObjectBigArray`, comme
-`trino-ml`).
-En `test` : `io.trino:trino-testing`, `io.trino:trino-main`, `io.trino:trino-main` (test-jar),
-`org.junit.jupiter:junit-jupiter-api`, `org.assertj:assertj-core`.
+`io.trino:trino-spi`, `io.airlift:slice`, et `com.github.spotbugs:spotbugs-annotations` (annotation
+`@SuppressFBWarnings` à rétention `CLASS`, jamais lue à l'exécution, donc `provided` suffit).
+Aucune dépendance `compile` : l'état groupé de l'agrégation indexe ses tas par `groupId` avec de
+simples tableaux Java agrandis via `Arrays.copyOf`, pas `ObjectBigArray`, donc `io.trino:trino-array`
+et `com.google.guava:guava` ne sont pas nécessaires.
+En `test` : `io.trino:trino-testing`, `io.trino:trino-main`, `io.trino:trino-tpch`,
+`org.junit.jupiter:junit-jupiter-api`, `org.junit.jupiter:junit-jupiter-engine`,
+`org.assertj:assertj-core`.
 
 Le parent est `airbase` et non `trino-root` : la `dependencyManagement` de Trino n'est donc pas
 héritée et **toutes les versions doivent être épinglées explicitement** dans le POM.
@@ -98,11 +101,22 @@ dev.jaaj.trino.search
    ├─ VectorDistanceFunctions   les @ScalarFunction de distance
    ├─ VectorFunctions           l2_norm, normalize_vector
    └─ knn
-      ├─ KnnAggregation         @AggregationFunction("knn_agg")
+      ├─ KnnAggregation         conteneur non enregistré, deux classes imbriquées portent chacune
+      │                         @AggregationFunction("knn_agg") : OfDoubleVectors (array(double))
+      │                         et OfRealVectors (array(real)), enregistrées toutes les deux par
+      │                         SearchPlugin
+      ├─ KnnHeap                tas binaire borné à k éléments
       ├─ KnnState               @AccumulatorStateMetadata
       ├─ KnnStateFactory
       └─ KnnStateSerializer
 ```
+
+Trino interdit à deux fonctions génériques portant le même nom de coexister dans une seule
+classe annotée `@AggregationFunction` dès que leurs signatures concrètes diffèrent
+(`FunctionsParserHelper.validateSignaturesCompatibility`) : `array(double)` et `array(real)`
+sont deux signatures distinctes bien que la clé `K` reste, elle, un type ouvert commun aux deux.
+`KnnAggregation` n'est donc qu'un conteneur ; les deux classes imbriquées portent chacune
+l'annotation et délèguent à des méthodes privées partagées sur la classe englobante.
 
 `SearchPlugin` est le seul membre de la racine : c'est le point d'entrée du `ServiceLoader`, et
 il agrège les fonctions de chaque famille. Ajouter une famille plus tard revient à créer un
@@ -224,8 +238,9 @@ logique de compaction et de remappage de positions. Pour un `k` typique (10 à 1
 est négligeable devant le calcul de distance lui-même. Si le profilage le contredit un jour, le
 tas est isolé derrière une classe et remplaçable sans toucher au reste.
 
-L'état groupé indexe ces tas par `groupId` via `ObjectBigArray` (artefact `io.trino:trino-array`,
-la même dépendance qu'utilise `trino-ml`).
+L'état groupé indexe ces tas par `groupId` avec de simples tableaux Java (`KnnHeap[]`, agrandis
+via `Arrays.copyOf` dans `ensureCapacity`), pas `ObjectBigArray` : pour le nombre de groupes
+typique d'un `GROUP BY`, la simplicité l'emporte sur le gain de `trino-array`.
 
 `getEstimatedSize()` est implémenté : Trino comptabilise alors la mémoire et interrompt
 proprement la requête au lieu de tomber en `OutOfMemoryError`.
@@ -260,6 +275,8 @@ la fusion, le vecteur requête n'a plus d'utilité.
 | `k` > nombre de lignes du groupe | renvoie toutes les lignes du groupe |
 | groupe vide | `NULL` |
 | `vector` `NULL` sur une ligne | ligne ignorée |
+| `vector` contenant un élément `NULL` | ligne ignorée, comme un vecteur `NULL` |
+| `query_vector` contenant un élément `NULL` | groupe entier à `NULL` : `query_vector` est constant sur tout le groupe, donc chaque ligne est ignorée et le groupe se retrouve sans aucun candidat |
 | `key` `NULL` | ligne conservée, clé `NULL` dans le résultat |
 | distances égales | ordre entre ex aequo non garanti, documenté comme tel |
 

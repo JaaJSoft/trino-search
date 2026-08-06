@@ -64,6 +64,10 @@ Renvoie les `k` plus proches voisins de `query_vector` **par groupe**, triés du
 plus lointain. `metric` vaut `'euclidean'`, `'euclidean_squared'`, `'cosine'`, `'dot_product'`
 ou `'manhattan'`.
 
+`knn_agg` est elle aussi soumise à la résolution de surcharge décrite ci-dessus : un littéral
+décimal non typé comme `ARRAY[0.1, 0.2]` passé en `vector` ou `query_vector` se lie à la
+surcharge `array(real)`, pas `array(double)`.
+
 ## Exemples
 
 Top 10 global sur une colonne `array(real)`, grace a la surcharge ajoutee par le plugin :
