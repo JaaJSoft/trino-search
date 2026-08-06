@@ -13,6 +13,8 @@
  */
 package dev.jaaj.trino.search.vector.knn;
 
+import io.airlift.slice.Slice;
+import io.airlift.slice.Slices;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -21,9 +23,23 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 public class TestKnnHeap
 {
+    private static final int SOURCE_PAGE_BYTES = 64 * 1024;
+
     private static List<Object> keysOf(KnnHeap heap)
     {
         return heap.drainSorted().stream().map(KnnHeap.Neighbour::key).toList();
+    }
+
+    /**
+     * What {@code VariableWidthBlock.getSlice} hands to the aggregation: a window over the whole
+     * page the key was read from, not a standalone buffer.
+     */
+    private static Slice keyViewingASourcePage(String value)
+    {
+        Slice page = Slices.allocate(SOURCE_PAGE_BYTES);
+        Slice key = Slices.utf8Slice(value);
+        page.setBytes(0, key);
+        return page.slice(0, key.length());
     }
 
     @Test
@@ -130,6 +146,42 @@ public class TestKnnHeap
 
         assertThat(keysOf(heap)).containsExactly("a", "b");
         assertThat(keysOf(heap)).containsExactly("a", "b");
+    }
+
+    @Test
+    public void testSliceKeysDoNotRetainTheirSourcePage()
+    {
+        KnnHeap heap = new KnnHeap(1, false);
+        heap.add(keyViewingASourcePage("a"), 1.0);
+
+        Slice stored = (Slice) heap.drainSorted().getFirst().key();
+
+        assertThat(stored).isEqualTo(Slices.utf8Slice("a"));
+        assertThat(stored.getRetainedSize()).isLessThan(SOURCE_PAGE_BYTES);
+    }
+
+    @Test
+    public void testEstimatedSizeCountsRetainedSliceKeys()
+    {
+        KnnHeap heap = new KnnHeap(4, false);
+        long empty = heap.estimatedSizeInBytes();
+        heap.add(Slices.utf8Slice("x".repeat(1024)), 1.0);
+
+        assertThat(heap.estimatedSizeInBytes()).isGreaterThanOrEqualTo(empty + 1024);
+    }
+
+    @Test
+    public void testEstimatedSizeCountsOnlyTheKeysStillInTheHeap()
+    {
+        KnnHeap heap = new KnnHeap(1, false);
+        long empty = heap.estimatedSizeInBytes();
+        for (int i = 0; i < 100; i++) {
+            heap.add(Slices.utf8Slice("x".repeat(1024)), 100.0 - i);
+        }
+
+        assertThat(heap.estimatedSizeInBytes())
+                .isGreaterThanOrEqualTo(empty + 1024)
+                .isLessThan(empty + 2048);
     }
 
     @Test
