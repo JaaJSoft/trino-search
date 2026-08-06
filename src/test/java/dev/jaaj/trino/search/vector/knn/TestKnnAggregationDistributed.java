@@ -139,4 +139,28 @@ public class TestKnnAggregationDistributed
                 """);
         assertEqualsIgnoreOrder(actual, expected);
     }
+
+    /**
+     * {@code dot_product} is the only metric with {@code higherIsCloser = true}: every other
+     * metric tested in this class ranks smaller as closer. An inverted direction across the
+     * serialize/combine boundary (for example a heap that keeps sifting toward the smallest dot
+     * product instead of the largest) would return the farthest neighbours while looking like a
+     * plausible answer, which single-partition coverage cannot catch.
+     */
+    @Test
+    public void testDotProductMetricMatchesTheNativeFunctionAcrossSplits()
+    {
+        MaterializedResult actual = computeActual(
+                """
+                SELECT transform(knn_agg(orderkey, ARRAY[CAST(orderkey AS double), 1.0], ARRAY[1.0, 1.0], 5, 'dot_product'), x -> x[1])
+                FROM tpch.tiny.orders
+                """);
+        MaterializedResult expected = computeActual(
+                """
+                SELECT array_agg(orderkey ORDER BY d DESC, orderkey) FROM (
+                    SELECT orderkey, dot_product(ARRAY[CAST(orderkey AS double), 1.0], ARRAY[1.0, 1.0]) AS d
+                    FROM tpch.tiny.orders ORDER BY d DESC, orderkey LIMIT 5)
+                """);
+        assertEqualsIgnoreOrder(actual, expected);
+    }
 }
