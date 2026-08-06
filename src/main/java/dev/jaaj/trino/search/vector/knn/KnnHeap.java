@@ -13,6 +13,8 @@
  */
 package dev.jaaj.trino.search.vector.knn;
 
+import io.airlift.slice.Slice;
+
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -37,6 +39,7 @@ public final class KnnHeap
     private final double[] distances;
     private final Object[] keys;
     private int size;
+    private long retainedKeyBytes;
 
     public KnnHeap(int k, boolean higherIsCloser)
     {
@@ -55,14 +58,15 @@ public final class KnnHeap
     {
         if (size < k) {
             distances[size] = distance;
-            keys[size] = key;
+            keys[size] = retain(key);
             siftUp(size);
             size++;
             return;
         }
         if (isCloser(distance, distances[0])) {
+            release(keys[0]);
             distances[0] = distance;
-            keys[0] = key;
+            keys[0] = retain(key);
             siftDown(0);
         }
     }
@@ -87,7 +91,30 @@ public final class KnnHeap
 
     public long estimatedSizeInBytes()
     {
-        return INSTANCE_SIZE + sizeOf(distances) + sizeOf(keys);
+        return INSTANCE_SIZE + sizeOf(distances) + sizeOf(keys) + retainedKeyBytes;
+    }
+
+    /**
+     * A {@link Slice} key read from a block is a window over the whole page it came from, so
+     * keeping one alive pins that page until the group is flushed. Copying bounds retention to
+     * the key itself and lets {@link #estimatedSizeInBytes()} report what the heap really holds,
+     * which is what Trino kills a query on.
+     */
+    private Object retain(Object key)
+    {
+        if (key instanceof Slice slice) {
+            Slice copy = slice.copy();
+            retainedKeyBytes += copy.getRetainedSize();
+            return copy;
+        }
+        return key;
+    }
+
+    private void release(Object key)
+    {
+        if (key instanceof Slice slice) {
+            retainedKeyBytes -= slice.getRetainedSize();
+        }
     }
 
     private boolean isCloser(double candidate, double incumbent)
