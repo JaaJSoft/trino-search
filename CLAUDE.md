@@ -8,22 +8,17 @@ The name is broader than the current content on purpose: further families of sea
 are expected, so each family lives in its own subpackage under `dev.jaaj.trino.search` and
 `SearchPlugin` is the only class at the root.
 
-The authoritative design document is
-[`docs/superpowers/specs/2026-08-05-trino-search-plugin-design.md`](docs/superpowers/specs/2026-08-05-trino-search-plugin-design.md).
-Read it before changing behavior: it records the edge-case semantics (null handling, zero
-norms, dimension mismatches) that the tests pin down, and what is deliberately out of scope.
+The tests are the specification. Edge-case behavior (null elements, zero norms, dimension
+mismatches, empty groups, a `k` larger than the group) is pinned by name in the test classes,
+and `README.md` documents the user-facing contract. Read both before changing behavior; if a
+change makes a test fail, the test is the thing to argue with, not to edit.
 
 ## Workflow artifacts are never committed
 
-Implementation plans, task briefs, progress ledgers and subagent reports stay out of git. They
-are scratch: they date the moment the code lands, they contain listings that were corrected
-during implementation, and in a public repository they leak internal tooling names and local
-machine paths. `.superpowers/` and `docs/superpowers/plans/` are gitignored, and must stay that
-way.
-
-Design documents under `docs/superpowers/specs/` are the exception and do belong in git: they
-record the edge-case semantics the tests pin down and the reasoning behind them, which is
-project knowledge rather than process bookkeeping.
+Implementation plans, task briefs, progress notes, assistant scratch directories: none of it
+goes in git. It is bookkeeping, it dates the moment the code lands, and it leaks local machine
+paths and tooling names into a public repository. Only source, tests, build files, `README.md`
+and this file belong here.
 
 ## Build
 
@@ -53,8 +48,8 @@ modernizer enforce most of the Trino code style on build. Rules the tooling does
 - Apache license header on every source file.
 - Root package is `dev.jaaj.trino.search`. Never `io.trino.*`: that groupId belongs to the
   Trino project, and a split package would break the isolated plugin classloader.
-- Code, comments, commit messages and PR descriptions are written in English. Design documents
-  in `docs/` are in French.
+- Code, comments, commit messages and PR descriptions are written in English. `README.md` is in
+  French.
 
 ## Testing
 

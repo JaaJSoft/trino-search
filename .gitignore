@@ -16,7 +16,6 @@ buildNumber.properties
 # JDT-specific (Eclipse Java Development Tools)
 .classpath
 
-# Assistant workflow scratch: plans, briefs, ledgers, subagent reports.
-# Design specs under docs/superpowers/specs/ are deliberately not ignored.
+# Assistant workflow scratch: plans, briefs, progress notes, reports.
 .superpowers/
-docs/superpowers/plans/
+docs/superpowers/
