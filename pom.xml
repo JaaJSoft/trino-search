@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.airlift</groupId>
+        <artifactId>airbase</artifactId>
+        <version>395</version>
+    </parent>
+
+    <groupId>dev.jaaj.trino</groupId>
+    <artifactId>trino-search</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <packaging>trino-plugin</packaging>
+    <description>Trino - Search functions</description>
+
+    <properties>
+        <air.java.version>25.0.1</air.java.version>
+        <project.build.targetJdk>25</project.build.targetJdk>
+        <dep.trino.version>483</dep.trino.version>
+        <dep.airlift.version>439</dep.airlift.version>
+
+        <!--
+          trino-main's BlockEncodingSimdSupport touches jdk.incubator.vector, an incubator
+          module that is not on the module path unless requested explicitly. Trino's own
+          root pom adds the same flag to its test JVM arguments.
+        -->
+        <air.test.jvm.additional-arguments>--add-modules=jdk.incubator.vector</air.test.jvm.additional-arguments>
+
+        <!--
+          Airbase's default PMD ruleset references the pre-7.x resource path
+          /rulesets/java/basic.xml, which does not exist in the PMD 7.26.0 that this
+          build resolves; the pmd goal fails before analyzing any source. Trino's own
+          root pom disables this same check (air.check.skip-pmd=true) for the same
+          reason.
+        -->
+        <air.check.skip-pmd>true</air.check.skip-pmd>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>io.airlift</groupId>
+                <artifactId>bom</artifactId>
+                <version>${dep.airlift.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!--
+          Needed for @SuppressFBWarnings: the KNN accumulator state hands out its live,
+          mutable heap on purpose (the aggregation input/combine functions mutate it in
+          place), which SpotBugs' EI_EXPOSE_REP/EI_EXPOSE_REP2 cannot tell apart from an
+          accidental leak. Annotation-only at runtime (CLASS retention), so provided scope
+          is enough.
+        -->
+        <dependency>
+            <groupId>com.github.spotbugs</groupId>
+            <artifactId>spotbugs-annotations</artifactId>
+            <version>4.10.3</version>
+            <scope>provided</scope>
+            <exclusions>
+                <!-- Only @SuppressFBWarnings is used; drop the unused jsr305 dependency
+                     rather than adding it to the trino-maven-plugin allow-list too. -->
+                <exclusion>
+                    <groupId>com.google.code.findbugs</groupId>
+                    <artifactId>jsr305</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <dependency>
+            <groupId>io.airlift</groupId>
+            <artifactId>slice</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.trino</groupId>
+            <artifactId>trino-spi</artifactId>
+            <version>${dep.trino.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.trino</groupId>
+            <artifactId>trino-main</artifactId>
+            <version>${dep.trino.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.trino</groupId>
+            <artifactId>trino-testing</artifactId>
+            <version>${dep.trino.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.trino</groupId>
+            <artifactId>trino-tpch</artifactId>
+            <version>${dep.trino.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>ca.vanzyl.provisio.maven.plugins</groupId>
+                    <artifactId>provisio-maven-plugin</artifactId>
+                    <version>1.1.3</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+        <plugins>
+            <plugin>
+                <groupId>io.trino</groupId>
+                <artifactId>trino-maven-plugin</artifactId>
+                <version>20</version>
+                <extensions>true</extensions>
+                <configuration>
+                    <!--
+                      spotbugs-annotations is compile-time only (CLASS retention, read by the
+                      SpotBugs static analyzer): it is legitimately "provided" scope without being
+                      part of the actual Trino SPI available at plugin runtime.
+                    -->
+                    <allowedProvidedDependencies>
+                        <id>com.github.spotbugs:spotbugs-annotations</id>
+                    </allowedProvidedDependencies>
+                </configuration>
+            </plugin>
+
+            <!--
+              trino-testing pulls in trino-exchange-filesystem (test scope), whose azure,
+              AWS and reactor-netty client dependencies each carry their own netty release,
+              and docker-java's transport clashes with the httpclient5 copy of the public
+              suffix list. Both pairs are scoped exceptions here, following the pattern
+              Trino's own root pom uses for the same kind of transitive-dependency overlap
+              (see io.trino:trino:pom:483, duplicate-finder-maven-plugin configuration).
+            -->
+            <plugin>
+                <groupId>org.basepom.maven</groupId>
+                <artifactId>duplicate-finder-maven-plugin</artifactId>
+                <configuration>
+                    <exceptions combine.children="append">
+                        <exception>
+                            <conflictingDependencies>
+                                <dependency>
+                                    <groupId>io.netty</groupId>
+                                    <artifactId>netty-codec-base</artifactId>
+                                </dependency>
+                                <dependency>
+                                    <groupId>io.netty</groupId>
+                                    <artifactId>netty-codec</artifactId>
+                                </dependency>
+                            </conflictingDependencies>
+                            <packages>
+                                <package>io.netty.handler.codec</package>
+                                <package>io.netty.handler.codec.base64</package>
+                                <package>io.netty.handler.codec.bytes</package>
+                                <package>io.netty.handler.codec.json</package>
+                                <package>io.netty.handler.codec.serialization</package>
+                                <package>io.netty.handler.codec.string</package>
+                            </packages>
+                        </exception>
+                        <exception>
+                            <conflictingDependencies>
+                                <dependency>
+                                    <groupId>com.github.docker-java</groupId>
+                                    <artifactId>docker-java-transport-zerodep</artifactId>
+                                </dependency>
+                                <dependency>
+                                    <groupId>org.apache.httpcomponents.client5</groupId>
+                                    <artifactId>httpclient5</artifactId>
+                                </dependency>
+                            </conflictingDependencies>
+                            <resources>
+                                <resource>org/publicsuffix/list/effective_tld_names.dat</resource>
+                            </resources>
+                        </exception>
+                    </exceptions>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
