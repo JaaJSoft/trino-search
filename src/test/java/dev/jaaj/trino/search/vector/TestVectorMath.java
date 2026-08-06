@@ -140,4 +140,35 @@ public class TestVectorMath
         assertThat(VectorMath.hasNulls(doubles(1.0, null), doubles(1.0, 2.0))).isTrue();
         assertThat(VectorMath.hasNulls(doubles(1.0, 2.0), doubles(1.0, 2.0))).isFalse();
     }
+
+    @Test
+    public void testCosineSimilarityWhenTheMagnitudeProductOverflows()
+    {
+        // each squared magnitude is finite at 1e308, but their product is not
+        Block huge = doubles(1e154);
+        assertThat(VectorMath.cosineSimilarity(huge, huge, DOUBLE_READER)).isCloseTo(1.0, within(1e-12));
+    }
+
+    @Test
+    public void testCosineSimilarityWhenTheMagnitudesThemselvesOverflow()
+    {
+        Block huge = doubles(1e200, 1e200);
+        assertThat(VectorMath.cosineSimilarity(huge, huge, DOUBLE_READER)).isCloseTo(1.0, within(1e-12));
+        assertThat(VectorMath.cosineSimilarity(doubles(1e200, 0.0), doubles(0.0, 1e200), DOUBLE_READER))
+                .isCloseTo(0.0, within(1e-12));
+    }
+
+    @Test
+    public void testCosineSimilarityOfTinyVectorsIsNotMistakenForZeroMagnitude()
+    {
+        Block tiny = doubles(1e-200, 1e-200);
+        assertThat(VectorMath.cosineSimilarity(tiny, tiny, DOUBLE_READER)).isCloseTo(1.0, within(1e-12));
+    }
+
+    @Test
+    public void testNormWhenTheSumOfSquaresOverflows()
+    {
+        assertThat(VectorMath.norm(doubles(1e200, 1e200), DOUBLE_READER))
+                .isCloseTo(Math.sqrt(2) * 1e200, within(1e188));
+    }
 }

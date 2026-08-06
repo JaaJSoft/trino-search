@@ -126,6 +126,24 @@ public class TestVectorFunctionQueries
     }
 
     @Test
+    public void testNormalizeVectorOfHugeComponentsStillHasUnitNorm()
+    {
+        // the sum of squares overflows to infinity, which used to make every component 0.0
+        assertQuery(
+                "SELECT l2_norm(normalize_vector(CAST(ARRAY[1e200, 1e200] AS array(double))))",
+                "SELECT CAST(1.0 AS DOUBLE)");
+    }
+
+    @Test
+    public void testNormalizeVectorOfTinyComponentsStillHasUnitNorm()
+    {
+        // the sum of squares underflows to zero, which used to be reported as a zero magnitude
+        assertQuery(
+                "SELECT l2_norm(normalize_vector(CAST(ARRAY[1e-200, 1e-200] AS array(double))))",
+                "SELECT CAST(1.0 AS DOUBLE)");
+    }
+
+    @Test
     public void testEmptyVectors()
     {
         assertQuery("SELECT euclidean_squared_distance(ARRAY[], ARRAY[])", "SELECT 0.0");

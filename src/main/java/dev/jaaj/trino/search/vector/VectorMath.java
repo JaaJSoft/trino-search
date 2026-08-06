@@ -74,6 +74,9 @@ final class VectorMath
             double value = reader.read(vector, i);
             sum += value * value;
         }
+        if (Double.isInfinite(sum) || sum == 0) {
+            return scaledNorm(vector, reader);
+        }
         return Math.sqrt(sum);
     }
 
@@ -90,9 +93,71 @@ final class VectorMath
             dotProduct += firstValue * secondValue;
         }
 
-        if (firstMagnitude == 0 || secondMagnitude == 0) {
+        // A product that overflowed to infinity or underflowed to zero says nothing about the
+        // vectors themselves, only about the accumulation. Rescale before concluding anything.
+        // Splitting into sqrt(a) * sqrt(b) would avoid the overflow without a second pass, but
+        // it loses the exactness that makes two identical vectors return exactly 1.
+        double magnitudeProduct = firstMagnitude * secondMagnitude;
+        if (magnitudeProduct == 0 || Double.isInfinite(magnitudeProduct) || Double.isInfinite(dotProduct)) {
+            return scaledCosineSimilarity(first, second, reader);
+        }
+        return dotProduct / Math.sqrt(magnitudeProduct);
+    }
+
+    /**
+     * Recomputes the norm after dividing out the largest component, for the rare vector whose
+     * sum of squares overflows although the norm itself is representable.
+     */
+    private static double scaledNorm(Block vector, VectorReader reader)
+    {
+        double scale = maxAbsoluteValue(vector, reader);
+        if (scale == 0 || Double.isInfinite(scale)) {
+            return scale;
+        }
+        double sum = 0.0;
+        for (int i = 0; i < vector.getPositionCount(); i++) {
+            double value = reader.read(vector, i) / scale;
+            sum += value * value;
+        }
+        return scale * Math.sqrt(sum);
+    }
+
+    /**
+     * Cosine is invariant to scaling either vector, so each is divided by its own largest
+     * component before the magnitudes are accumulated. This is also where a genuinely zero
+     * vector is detected, since a zero magnitude alone cannot distinguish one from a vector
+     * whose squares underflowed.
+     */
+    private static double scaledCosineSimilarity(Block first, Block second, VectorReader reader)
+    {
+        double firstScale = maxAbsoluteValue(first, reader);
+        double secondScale = maxAbsoluteValue(second, reader);
+        if (firstScale == 0 || secondScale == 0) {
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Vector magnitude cannot be zero");
         }
-        return dotProduct / Math.sqrt(firstMagnitude * secondMagnitude);
+        if (Double.isInfinite(firstScale) || Double.isInfinite(secondScale)) {
+            return Double.NaN;
+        }
+
+        double firstMagnitude = 0.0;
+        double secondMagnitude = 0.0;
+        double dotProduct = 0.0;
+        for (int i = 0; i < first.getPositionCount(); i++) {
+            double firstValue = reader.read(first, i) / firstScale;
+            double secondValue = reader.read(second, i) / secondScale;
+            firstMagnitude += firstValue * firstValue;
+            secondMagnitude += secondValue * secondValue;
+            dotProduct += firstValue * secondValue;
+        }
+        return dotProduct / (Math.sqrt(firstMagnitude) * Math.sqrt(secondMagnitude));
+    }
+
+    private static double maxAbsoluteValue(Block vector, VectorReader reader)
+    {
+        double max = 0.0;
+        for (int i = 0; i < vector.getPositionCount(); i++) {
+            max = Math.max(max, Math.abs(reader.read(vector, i)));
+        }
+        return max;
     }
 }
