@@ -114,6 +114,7 @@ public final class KnnStateFactory
         private int[] ks = new int[0];
         private String[] metricNames = new String[0];
         private int groupId;
+        private long heapsSizeInBytes;
 
         @Override
         public void setGroupId(int groupId)
@@ -137,9 +138,21 @@ public final class KnnStateFactory
             return heaps[groupId];
         }
 
+        /**
+         * A heap never grows after construction, so the running total only has to follow which
+         * heap is attached to which group. {@code deserialize} attaches a fresh heap to a group
+         * that may already hold one, hence the subtraction.
+         */
         @Override
         public void setHeap(KnnHeap heap)
         {
+            KnnHeap previous = heaps[groupId];
+            if (previous != null) {
+                heapsSizeInBytes -= previous.estimatedSizeInBytes();
+            }
+            if (heap != null) {
+                heapsSizeInBytes += heap.estimatedSizeInBytes();
+            }
             heaps[groupId] = heap;
         }
 
@@ -167,16 +180,14 @@ public final class KnnStateFactory
             metricNames[groupId] = metricName;
         }
 
+        /**
+         * Called once per input page by {@code HashAggregationOperator.updateMemory}, so it must
+         * stay constant time: walking the groups here makes the whole aggregation quadratic.
+         */
         @Override
         public long getEstimatedSize()
         {
-            long size = INSTANCE_SIZE + sizeOf(heaps) + sizeOf(ks) + sizeOf(metricNames);
-            for (KnnHeap heap : heaps) {
-                if (heap != null) {
-                    size += heap.estimatedSizeInBytes();
-                }
-            }
-            return size;
+            return INSTANCE_SIZE + sizeOf(heaps) + sizeOf(ks) + sizeOf(metricNames) + heapsSizeInBytes;
         }
     }
 }
