@@ -13,7 +13,7 @@
  */
 package dev.jaaj.trino.search.vector.knn;
 
-import io.airlift.slice.Slice;
+import io.trino.spi.block.ValueBlock;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -27,17 +27,26 @@ import static io.airlift.slice.SizeOf.sizeOf;
  * <p>
  * The root holds the <em>worst</em> retained candidate, so deciding whether a new candidate
  * belongs in the result is a single comparison against position 0.
+ * <p>
+ * A key is held as a single-position {@link ValueBlock} of its own rather than as the native
+ * value {@code TypeUtils.readNativeValue} would return. Those native values are windows over the
+ * page they were read from - a {@code Slice} for {@code varchar}, a {@code Block} for
+ * {@code array}, a {@code SqlRow} for {@code row}, a {@code SqlMap} for {@code map} - so keeping
+ * one alive pins that whole page until the group is flushed, and the accounting below would only
+ * see a reference. {@code getSingleValueBlock} is the SPI's copy for every one of those shapes at
+ * once, which bounds retention to the key itself and makes {@link #estimatedSizeInBytes()} report
+ * what the heap really holds. That number is what Trino kills a query on.
  */
 public final class KnnHeap
 {
     private static final long INSTANCE_SIZE = instanceSize(KnnHeap.class);
 
-    public record Neighbour(Object key, double distance) {}
+    public record Neighbour(ValueBlock key, double distance) {}
 
     private final int k;
     private final boolean higherIsCloser;
     private final double[] distances;
-    private final Object[] keys;
+    private final ValueBlock[] keys;
     private int size;
     private long retainedKeyBytes;
 
@@ -46,7 +55,7 @@ public final class KnnHeap
         this.k = k;
         this.higherIsCloser = higherIsCloser;
         this.distances = new double[k];
-        this.keys = new Object[k];
+        this.keys = new ValueBlock[k];
     }
 
     public int size()
@@ -54,27 +63,39 @@ public final class KnnHeap
         return size;
     }
 
-    public void add(Object key, double distance)
+    public void add(ValueBlock keyBlock, int position, double distance)
+    {
+        addOwnedKey(keyBlock.getSingleValueBlock(position), distance);
+    }
+
+    /**
+     * The other heap's keys are already single-position blocks it owns, so they move over as they
+     * are. Both heaps count them for as long as both are alive, which over-reports rather than
+     * under-reports and settles as soon as the merged-from state is dropped.
+     */
+    public void mergeFrom(KnnHeap other)
+    {
+        for (int i = 0; i < other.size; i++) {
+            addOwnedKey(other.keys[i], other.distances[i]);
+        }
+    }
+
+    private void addOwnedKey(ValueBlock key, double distance)
     {
         if (size < k) {
             distances[size] = distance;
-            keys[size] = retain(key);
+            keys[size] = key;
+            retainedKeyBytes += key.getRetainedSizeInBytes();
             siftUp(size);
             size++;
             return;
         }
         if (isCloser(distance, distances[0])) {
-            release(keys[0]);
+            retainedKeyBytes -= keys[0].getRetainedSizeInBytes();
+            retainedKeyBytes += key.getRetainedSizeInBytes();
             distances[0] = distance;
-            keys[0] = retain(key);
+            keys[0] = key;
             siftDown(0);
-        }
-    }
-
-    public void mergeFrom(KnnHeap other)
-    {
-        for (int i = 0; i < other.size; i++) {
-            add(other.keys[i], other.distances[i]);
         }
     }
 
@@ -92,29 +113,6 @@ public final class KnnHeap
     public long estimatedSizeInBytes()
     {
         return INSTANCE_SIZE + sizeOf(distances) + sizeOf(keys) + retainedKeyBytes;
-    }
-
-    /**
-     * A {@link Slice} key read from a block is a window over the whole page it came from, so
-     * keeping one alive pins that page until the group is flushed. Copying bounds retention to
-     * the key itself and lets {@link #estimatedSizeInBytes()} report what the heap really holds,
-     * which is what Trino kills a query on.
-     */
-    private Object retain(Object key)
-    {
-        if (key instanceof Slice slice) {
-            Slice copy = slice.copy();
-            retainedKeyBytes += copy.getRetainedSize();
-            return copy;
-        }
-        return key;
-    }
-
-    private void release(Object key)
-    {
-        if (key instanceof Slice slice) {
-            retainedKeyBytes -= slice.getRetainedSize();
-        }
     }
 
     private boolean isCloser(double candidate, double incumbent)
@@ -161,7 +159,7 @@ public final class KnnHeap
         double distance = distances[first];
         distances[first] = distances[second];
         distances[second] = distance;
-        Object key = keys[first];
+        ValueBlock key = keys[first];
         keys[first] = keys[second];
         keys[second] = key;
     }
