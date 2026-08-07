@@ -98,14 +98,13 @@ public final class KnnStateSerializer
         // combine(...) once per position. A heap kept from a previous call here would leak
         // that earlier position's neighbours into this one, so every call must start from a
         // brand new heap, never the one already attached to state (if any).
-        KnnHeap heap = new KnnHeap(k, Metric.fromName(metricName).higherIsCloser());
-        state.setHeap(heap);
+        state.setHeap(new KnnHeap(k, Metric.fromName(metricName).higherIsCloser()));
 
         Block neighbours = neighbourArrayType.getObject(row.getRawFieldBlock(2), offset);
         for (int i = 0; i < neighbours.getPositionCount(); i++) {
             SqlRow neighbour = neighbourType.getObject(neighbours, i);
             double distance = DOUBLE.getDouble(neighbour.getRawFieldBlock(1), neighbour.getRawIndex());
-            heap.add(neighbour.getUnderlyingFieldBlock(0), neighbour.getUnderlyingFieldPosition(0), distance);
+            state.addToHeap(neighbour.getUnderlyingFieldBlock(0), neighbour.getUnderlyingFieldPosition(0), distance);
         }
     }
 }

@@ -162,10 +162,8 @@ public final class KnnAggregation
         }
 
         Metric metric = Metric.fromName(metricName.toStringUtf8());
-        KnnHeap heap = state.getHeap();
-        if (heap == null) {
-            heap = new KnnHeap((int) k, metric.higherIsCloser());
-            state.setHeap(heap);
+        if (state.getHeap() == null) {
+            state.setHeap(new KnnHeap((int) k, metric.higherIsCloser()));
             state.setK((int) k);
             state.setMetricName(metricName.toStringUtf8());
         }
@@ -180,7 +178,7 @@ public final class KnnAggregation
             return;
         }
 
-        heap.add(key, position, metric.compute(vector, queryVector, reader));
+        state.addToHeap(key, position, metric.compute(vector, queryVector, reader));
     }
 
     private static void mergeStates(KnnState state, KnnState otherState)
@@ -189,15 +187,14 @@ public final class KnnAggregation
         if (other == null) {
             return;
         }
-        KnnHeap heap = state.getHeap();
-        if (heap == null) {
+        if (state.getHeap() == null) {
             state.setHeap(other);
             state.setK(otherState.getK());
             state.setMetricName(otherState.getMetricName());
             return;
         }
         checkConstantWithinGroup(state.getK(), otherState.getK(), state.getMetricName(), otherState.getMetricName());
-        heap.mergeFrom(other);
+        state.mergeIntoHeap(other);
     }
 
     /**

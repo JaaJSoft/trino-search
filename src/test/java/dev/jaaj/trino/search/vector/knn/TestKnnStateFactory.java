@@ -15,14 +15,71 @@ package dev.jaaj.trino.search.vector.knn;
 
 import dev.jaaj.trino.search.vector.knn.KnnStateFactory.GroupedKnnState;
 import dev.jaaj.trino.search.vector.knn.KnnStateFactory.SingleKnnState;
+import io.airlift.slice.Slice;
+import io.airlift.slice.Slices;
+import io.trino.spi.block.ArrayBlockBuilder;
+import io.trino.spi.block.Block;
+import io.trino.spi.block.BlockBuilder;
+import io.trino.spi.block.ValueBlock;
+import io.trino.spi.type.ArrayType;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.List;
 
+import static io.trino.spi.type.DoubleType.DOUBLE;
+import static io.trino.spi.type.VarcharType.VARCHAR;
 import static org.assertj.core.api.Assertions.assertThat;
 
 public class TestKnnStateFactory
 {
+    /**
+     * Wide enough that a total which stops at what an empty heap reports is off by orders of
+     * magnitude rather than by a rounding difference.
+     */
+    private static final String WIDE_KEY = "x".repeat(100_000);
+    private static final Slice EUCLIDEAN = Slices.utf8Slice("euclidean");
+    private static final ArrayType VECTOR_TYPE = new ArrayType(DOUBLE);
+
+    private static ValueBlock varcharKey(String value)
+    {
+        BlockBuilder builder = VARCHAR.createBlockBuilder(null, 1);
+        VARCHAR.writeString(builder, value);
+        return builder.buildValueBlock();
+    }
+
+    private static Block vector(double... values)
+    {
+        ArrayBlockBuilder builder = (ArrayBlockBuilder) VECTOR_TYPE.createBlockBuilder(null, 1);
+        builder.buildEntry(elements -> {
+            for (double value : values) {
+                DOUBLE.writeDouble(elements, value);
+            }
+        });
+        return VECTOR_TYPE.getObject(builder.build(), 0);
+    }
+
+    private static void input(KnnState state, String key, double coordinate, int k)
+    {
+        KnnAggregation.OfDoubleVectors.input(
+                state, varcharKey(key), 0, vector(coordinate), vector(0.0), k, EUCLIDEAN);
+    }
+
+    private static List<String> keysOf(KnnHeap heap)
+    {
+        return heap.drainSorted().stream()
+                .map(neighbour -> VARCHAR.getSlice(neighbour.key(), 0).toStringUtf8())
+                .toList();
+    }
+
+    private static GroupedKnnState singleGroupState()
+    {
+        GroupedKnnState state = new GroupedKnnState();
+        state.ensureCapacity(1);
+        state.setGroupId(0);
+        return state;
+    }
+
     @Test
     public void testSingleStateCountsItsHeap()
     {
@@ -114,5 +171,113 @@ public class TestKnnStateFactory
 
         assertThat(total).isEqualTo(calls * state.getEstimatedSize());
         assertThat(elapsed).isLessThan(Duration.ofSeconds(1));
+    }
+
+    /**
+     * The heap of a group is attached on its first row and filled on that row and every later
+     * one, so a total that only follows {@code setHeap} freezes the group's contribution at what
+     * an empty heap reports and the keys it retains stay invisible to the memory tracker.
+     */
+    @Test
+    public void testGroupedStateCountsKeysAddedAfterTheHeapIsAttached()
+    {
+        GroupedKnnState state = singleGroupState();
+        long empty = state.getEstimatedSize();
+
+        input(state, WIDE_KEY, 1.0, 4);
+
+        assertThat(state.getEstimatedSize()).isEqualTo(empty + state.getHeap().estimatedSizeInBytes());
+        assertThat(state.getEstimatedSize()).isGreaterThan(empty + WIDE_KEY.length());
+    }
+
+    /**
+     * Combining into a group that already holds a heap mutates that heap in place, which is the
+     * second way a group grows after its heap was attached.
+     */
+    @Test
+    public void testGroupedStateCountsKeysMergedIntoAnAttachedHeap()
+    {
+        GroupedKnnState state = singleGroupState();
+        long empty = state.getEstimatedSize();
+        input(state, "narrow", 1.0, 4);
+
+        SingleKnnState other = new SingleKnnState();
+        input(other, WIDE_KEY, 2.0, 4);
+        KnnAggregation.OfDoubleVectors.combine(state, other);
+
+        assertThat(state.getEstimatedSize()).isEqualTo(empty + state.getHeap().estimatedSizeInBytes());
+        assertThat(state.getEstimatedSize()).isGreaterThan(empty + WIDE_KEY.length());
+    }
+
+    /**
+     * The third way: {@code deserialize} attaches an empty heap and then fills it from the
+     * serialized neighbours, so the whole intermediate state of a group arrives uncounted.
+     */
+    @Test
+    public void testGroupedStateCountsKeysRestoredByDeserialize()
+    {
+        SingleKnnState source = new SingleKnnState();
+        input(source, WIDE_KEY, 1.0, 4);
+
+        KnnStateSerializer serializer = new KnnStateSerializer(VARCHAR);
+        BlockBuilder serialized = serializer.getSerializedType().createBlockBuilder(null, 1);
+        serializer.serialize(source, serialized);
+
+        GroupedKnnState state = singleGroupState();
+        long empty = state.getEstimatedSize();
+        serializer.deserialize(serialized.build(), 0, state);
+
+        assertThat(state.getEstimatedSize()).isEqualTo(empty + state.getHeap().estimatedSizeInBytes());
+        assertThat(state.getEstimatedSize()).isGreaterThan(empty + WIDE_KEY.length());
+    }
+
+    /**
+     * {@code addIntermediateAsCombine} reuses one scratch state for every position of an
+     * intermediate block, so a group is deserialized into again and again. Every call after the
+     * first replaces a heap that already retains keys, which is the one path where the running
+     * total has to unwind a non-empty heap before counting the one taking its place.
+     */
+    @Test
+    public void testGroupedStateCountsOnlyTheLastHeapDeserializedIntoAGroup()
+    {
+        SingleKnnState wide = new SingleKnnState();
+        input(wide, WIDE_KEY, 1.0, 4);
+        SingleKnnState narrow = new SingleKnnState();
+        input(narrow, "narrow", 1.0, 4);
+
+        KnnStateSerializer serializer = new KnnStateSerializer(VARCHAR);
+        BlockBuilder serialized = serializer.getSerializedType().createBlockBuilder(null, 2);
+        serializer.serialize(wide, serialized);
+        serializer.serialize(narrow, serialized);
+        Block intermediate = serialized.build();
+
+        GroupedKnnState state = singleGroupState();
+        long empty = state.getEstimatedSize();
+        serializer.deserialize(intermediate, 0, state);
+        serializer.deserialize(intermediate, 1, state);
+
+        assertThat(keysOf(state.getHeap())).containsExactly("narrow");
+        assertThat(state.getEstimatedSize())
+                .isEqualTo(empty + state.getHeap().estimatedSizeInBytes())
+                .isLessThan(empty + WIDE_KEY.length());
+    }
+
+    /**
+     * The heap is bounded, so a candidate that displaces the incumbent releases its key. A total
+     * that only ever adds would drift upwards for the rest of the query.
+     */
+    @Test
+    public void testGroupedStateFollowsTheHeapDownWhenAKeyIsEvicted()
+    {
+        GroupedKnnState state = singleGroupState();
+        long empty = state.getEstimatedSize();
+        input(state, WIDE_KEY, 2.0, 1);
+        long wide = state.getEstimatedSize();
+
+        input(state, "narrow", 1.0, 1);
+
+        assertThat(state.getEstimatedSize())
+                .isLessThan(wide)
+                .isEqualTo(empty + state.getHeap().estimatedSizeInBytes());
     }
 }
