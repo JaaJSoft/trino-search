@@ -25,6 +25,7 @@ import io.trino.spi.type.ArrayType;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.List;
 
 import static io.trino.spi.type.DoubleType.DOUBLE;
 import static io.trino.spi.type.VarcharType.VARCHAR;
@@ -62,6 +63,13 @@ public class TestKnnStateFactory
     {
         KnnAggregation.OfDoubleVectors.input(
                 state, varcharKey(key), 0, vector(coordinate), vector(0.0), k, EUCLIDEAN);
+    }
+
+    private static List<String> keysOf(KnnHeap heap)
+    {
+        return heap.drainSorted().stream()
+                .map(neighbour -> VARCHAR.getSlice(neighbour.key(), 0).toStringUtf8())
+                .toList();
     }
 
     private static GroupedKnnState singleGroupState()
@@ -221,6 +229,37 @@ public class TestKnnStateFactory
 
         assertThat(state.getEstimatedSize()).isEqualTo(empty + state.getHeap().estimatedSizeInBytes());
         assertThat(state.getEstimatedSize()).isGreaterThan(empty + WIDE_KEY.length());
+    }
+
+    /**
+     * {@code addIntermediateAsCombine} reuses one scratch state for every position of an
+     * intermediate block, so a group is deserialized into again and again. Every call after the
+     * first replaces a heap that already retains keys, which is the one path where the running
+     * total has to unwind a non-empty heap before counting the one taking its place.
+     */
+    @Test
+    public void testGroupedStateCountsOnlyTheLastHeapDeserializedIntoAGroup()
+    {
+        SingleKnnState wide = new SingleKnnState();
+        input(wide, WIDE_KEY, 1.0, 4);
+        SingleKnnState narrow = new SingleKnnState();
+        input(narrow, "narrow", 1.0, 4);
+
+        KnnStateSerializer serializer = new KnnStateSerializer(VARCHAR);
+        BlockBuilder serialized = serializer.getSerializedType().createBlockBuilder(null, 2);
+        serializer.serialize(wide, serialized);
+        serializer.serialize(narrow, serialized);
+        Block intermediate = serialized.build();
+
+        GroupedKnnState state = singleGroupState();
+        long empty = state.getEstimatedSize();
+        serializer.deserialize(intermediate, 0, state);
+        serializer.deserialize(intermediate, 1, state);
+
+        assertThat(keysOf(state.getHeap())).containsExactly("narrow");
+        assertThat(state.getEstimatedSize())
+                .isEqualTo(empty + state.getHeap().estimatedSizeInBytes())
+                .isLessThan(empty + WIDE_KEY.length());
     }
 
     /**
