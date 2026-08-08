@@ -123,6 +123,22 @@
             <artifactId>junit-jupiter-engine</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!--
+          Airbase already manages both JMH artifacts through dep.jmh.version, so no version is
+          declared here: pinning one would only risk drifting from the parent.
+        -->
+        <dependency>
+            <groupId>org.openjdk.jmh</groupId>
+            <artifactId>jmh-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.openjdk.jmh</groupId>
+            <artifactId>jmh-generator-annprocess</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -133,9 +149,46 @@
                     <artifactId>provisio-maven-plugin</artifactId>
                     <version>1.1.3</version>
                 </plugin>
+
+                <!--
+                  Only ever invoked explicitly from the command line to run the benchmarks; it is
+                  deliberately not bound to a lifecycle phase. Airbase does not manage this
+                  plugin, so the version is pinned here.
+                -->
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>exec-maven-plugin</artifactId>
+                    <version>3.5.0</version>
+                </plugin>
             </plugins>
         </pluginManagement>
         <plugins>
+            <!--
+              JDK 25 no longer discovers annotation processors implicitly from the test
+              classpath, so jmh-generator-annprocess has to be named explicitly or JMH never
+              generates the *_jmhTest classes and META-INF/BenchmarkList, and every benchmark
+              run fails with "Unable to find the resource: /META-INF/BenchmarkList".
+              annotationProcessorPathsUseDepMgmt lets the path stay unversioned, tracking
+              dep.jmh.version the same way the dependency declaration does.
+            -->
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>default-testCompile</id>
+                        <configuration>
+                            <annotationProcessorPathsUseDepMgmt>true</annotationProcessorPathsUseDepMgmt>
+                            <annotationProcessorPaths>
+                                <path>
+                                    <groupId>org.openjdk.jmh</groupId>
+                                    <artifactId>jmh-generator-annprocess</artifactId>
+                                </path>
+                            </annotationProcessorPaths>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
             <plugin>
                 <groupId>io.trino</groupId>
                 <artifactId>trino-maven-plugin</artifactId>

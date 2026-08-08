@@ -69,6 +69,29 @@ Three levels, all of which matter:
 the serialize/combine cycle entirely, so a broken `@CombineFunction` or an incomplete
 serialized state passes every naive test and produces wrong results in production.
 
+## Benchmarks
+
+JMH benchmarks live in `src/test/java/dev/jaaj/trino/search/vector/benchmark`. Surefire only
+collects `Test*`, so `Benchmark*` classes never run as part of the test suite. What does run is
+`TestBenchmarksSmoke`, which executes each of them with one short iteration and no warmup: it
+proves they still compile and run, and asserts nothing about the numbers.
+
+A real measurement run:
+
+```bash
+JAVA_HOME="C:\Program Files\Eclipse Adoptium\jdk-25.0.1.8-hotspot" ./mvnw test-compile exec:java \
+  -Dexec.classpathScope=test \
+  -Dexec.mainClass=dev.jaaj.trino.search.vector.benchmark.BenchmarkRunner \
+  -Dexec.args="BenchmarkVectorDistances"
+```
+
+The argument is a JMH include regex; omitting it runs everything, which takes well over an hour.
+Numbers from a laptop are only comparable within a single run: turbo and thermal throttling make
+them useless across machines or across hours.
+
+`TestKnnAggRecall` is not a benchmark. It checks that the recall harness scores the exact
+aggregation at 1.0, which is what will make an approximate implementation's recall meaningful.
+
 ## PR Descriptions
 
 PR descriptions must follow the structure of `.github/PULL_REQUEST_TEMPLATE.md` (Summary /
