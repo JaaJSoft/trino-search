@@ -63,4 +63,11 @@ public class TestBenchmarksSmoke
     {
         smokeRun(BenchmarkVectorDistances.class, Map.of("dimension", "8", "metricName", "euclidean"));
     }
+
+    @Test
+    public void testKnnHeap()
+            throws RunnerException
+    {
+        smokeRun(BenchmarkKnnHeap.class, Map.of("k", "10", "arrivalOrder", "RANDOM"));
+    }
 }
