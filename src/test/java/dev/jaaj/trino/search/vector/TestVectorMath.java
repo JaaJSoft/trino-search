@@ -75,6 +75,38 @@ public class TestVectorMath
                 .isEqualTo(expected);
     }
 
+    /**
+     * The counterpart of {@link #testRealVectorsWidenBeforeTheArithmetic} for the vectorised body.
+     * That one passes a single component, so the whole of it runs in the scalar remainder and the
+     * widened lanes are never reached. This vector is long enough that most of it is read in
+     * whatever the widest step happens to be, with the remainder covered as well.
+     * <p>
+     * Operands within a factor of two of each other subtract exactly in float, by Sterbenz, which
+     * hides the mistake this pins: the long region test above uses whole numbers and would pass
+     * against lanes that subtracted as floats and widened afterwards. A constant ratio of three
+     * keeps every pair outside that range.
+     */
+    @Test
+    public void testTheVectorisedRealBodyWidensBeforeSubtracting()
+    {
+        int length = 37;
+        Float[] left = new Float[length];
+        Float[] right = new Float[length];
+        for (int i = 0; i < length; i++) {
+            left[i] = 0.1f * (i + 1);
+            right[i] = 0.3f * (i + 1);
+        }
+
+        double expected = 0;
+        for (int i = 0; i < length; i++) {
+            double difference = (double) (float) (0.1f * (i + 1)) - (double) (float) (0.3f * (i + 1));
+            expected += difference * difference;
+        }
+
+        assertThat(VectorMath.euclideanSquared(reals(left), reals(right), REAL_READER))
+                .isCloseTo(expected, within(1e-15));
+    }
+
     @Test
     public void testADictionaryEncodedRealVectorIsReadThroughItsPositions()
     {
