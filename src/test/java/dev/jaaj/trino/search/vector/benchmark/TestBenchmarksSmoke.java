@@ -74,9 +74,13 @@ public class TestBenchmarksSmoke
     private static void requireAllParamsPinned(Class<?> benchmarkClass, Map<String, String> params)
     {
         List<String> missing = new ArrayList<>();
-        for (Field field : benchmarkClass.getDeclaredFields()) {
-            if (field.isAnnotationPresent(Param.class) && !params.containsKey(field.getName())) {
-                missing.add(field.getName());
+        // JMH itself collects @Param fields from the whole hierarchy, so a base class holding a
+        // shared axis would otherwise slip past this check while still expanding the run.
+        for (Class<?> type = benchmarkClass; type != null && type != Object.class; type = type.getSuperclass()) {
+            for (Field field : type.getDeclaredFields()) {
+                if (field.isAnnotationPresent(Param.class) && !params.containsKey(field.getName())) {
+                    missing.add(field.getName());
+                }
             }
         }
         assertThat(missing)

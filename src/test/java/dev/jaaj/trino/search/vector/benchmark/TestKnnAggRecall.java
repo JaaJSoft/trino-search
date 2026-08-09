@@ -17,8 +17,10 @@ import dev.jaaj.trino.search.vector.knn.KnnAggregation;
 import dev.jaaj.trino.search.vector.knn.KnnHeap;
 import dev.jaaj.trino.search.vector.knn.KnnState;
 import dev.jaaj.trino.search.vector.knn.KnnStateFactory;
+import dev.jaaj.trino.search.vector.knn.KnnStateSerializer;
 import io.airlift.slice.Slices;
 import io.trino.spi.block.Block;
+import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.block.LongArrayBlock;
 import org.junit.jupiter.api.Test;
 
@@ -69,9 +71,9 @@ public class TestKnnAggRecall
 
     /**
      * A single partition never calls {@code @CombineFunction}: the input rows all land in one
-     * {@code KnnState} and there is nothing to merge. Splitting the base vectors across two states
-     * and merging them with {@code combine} before draining is what would catch a combine that
-     * drops candidates or a serialized state that loses part of the heap.
+     * {@code KnnState} and there is nothing to merge. Splitting the base vectors across two states,
+     * serializing one of them and merging the result with {@code combine} before draining is what
+     * would catch a combine that drops candidates or a serialized state that loses part of the heap.
      */
     @Test
     public void testExactAggregationHasPerfectRecallOnDoubleVectorsAcrossCombine()
@@ -144,9 +146,10 @@ public class TestKnnAggRecall
     }
 
     /**
-     * Splits the base vectors across two states fed independently, then merges them with the
-     * aggregation's {@code @CombineFunction} before draining: the shape a partial-per-split plus
-     * final aggregation plan produces, which {@link #runAggregation} never exercises.
+     * Splits the base vectors across two states fed independently, round-trips the second one
+     * through {@link KnnStateSerializer}, then merges them with the aggregation's
+     * {@code @CombineFunction} before draining: the shape a partial-per-split plus final
+     * aggregation plan produces, which {@link #runAggregation} never exercises.
      */
     private static double[] runAggregationAcrossCombine(
             LongArrayBlock keys,
@@ -161,13 +164,31 @@ public class TestKnnAggRecall
         KnnState otherState = new KnnStateFactory(BIGINT).createSingleState();
         feedInput(otherState, keys, baseBlocks, split, baseBlocks.length, queryBlock, distance, realVectors);
 
+        KnnState intermediateState = roundTrip(otherState);
         if (realVectors) {
-            KnnAggregation.OfRealVectors.combine(state, otherState);
+            KnnAggregation.OfRealVectors.combine(state, intermediateState);
         }
         else {
-            KnnAggregation.OfDoubleVectors.combine(state, otherState);
+            KnnAggregation.OfDoubleVectors.combine(state, intermediateState);
         }
         return drainDistances(state);
+    }
+
+    /**
+     * Trino never hands a live partial state to the final aggregation: it serializes the state,
+     * ships it between stages, and deserializes it into a fresh one. A serializer that dropped
+     * part of the heap, or a deserializer that carried a previous position's neighbours over,
+     * stays invisible to a combine called on two in-memory states.
+     */
+    private static KnnState roundTrip(KnnState state)
+    {
+        KnnStateSerializer serializer = new KnnStateSerializer(BIGINT);
+        BlockBuilder serializedBuilder = serializer.getSerializedType().createBlockBuilder(null, 1);
+        serializer.serialize(state, serializedBuilder);
+
+        KnnState deserialized = new KnnStateFactory(BIGINT).createSingleState();
+        serializer.deserialize(serializedBuilder.build(), 0, deserialized);
+        return deserialized;
     }
 
     private static void feedInput(

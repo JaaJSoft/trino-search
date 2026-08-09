@@ -52,6 +52,18 @@ public class TestRecall
         assertThat(Recall.at(3, new double[] {1.0, 2.0, 3.0000000000001}, TRUTH, false)).isEqualTo(1.0);
     }
 
+    /**
+     * The other side of that boundary. The tolerance absorbs the last bits of a different
+     * accumulation order, nothing more: a neighbour beyond it is a genuine miss, and this pins
+     * that so widening the tolerance later cannot quietly turn misses into hits.
+     */
+    @Test
+    public void testNeighbourBeyondTheToleranceDoesNotCount()
+    {
+        assertThat(Recall.at(3, new double[] {1.0, 2.0, 3.00000001}, TRUTH, false))
+                .isCloseTo(2.0 / 3.0, within(1e-12));
+    }
+
     @Test
     public void testHigherIsCloserInvertsTheComparison()
     {

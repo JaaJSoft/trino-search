@@ -103,10 +103,23 @@ public class BenchmarkKnnAggQuery
         knnAggQuery = "SELECT knn_agg(id, v, %s, %s, '%s') FROM memory.default.vectors"
                 .formatted(queryVector, K, metricName);
         orderByLimitQuery = "SELECT id FROM memory.default.vectors ORDER BY %s(v, %s) ASC LIMIT %s"
-                .formatted(
-                        metricName.equals("cosine") ? "cosine_distance" : "euclidean_distance",
-                        queryVector,
-                        K);
+                .formatted(scalarFunctionFor(metricName), queryVector, K);
+    }
+
+    /**
+     * The two measured queries are only comparable while the scalar function ranks rows the same
+     * way knn_agg's metric does. A metric added to the parameter list without a counterpart here
+     * has to fail loudly rather than fall back to a distance that quietly answers a different
+     * question and makes the comparison meaningless.
+     */
+    private static String scalarFunctionFor(String metricName)
+    {
+        return switch (metricName) {
+            case "euclidean" -> "euclidean_distance";
+            case "cosine" -> "cosine_distance";
+            default -> throw new IllegalArgumentException(
+                    "no scalar counterpart is known for metric '%s'".formatted(metricName));
+        };
     }
 
     @TearDown(Level.Trial)

@@ -72,7 +72,7 @@ public class BenchmarkKnnHeap
     public int k;
 
     @Param({"RANDOM", "ASCENDING", "DESCENDING"})
-    public String arrivalOrder;
+    public ArrivalOrder arrivalOrder;
 
     private double[] distances;
     private LongArrayBlock keys;
@@ -88,7 +88,7 @@ public class BenchmarkKnnHeap
             distances[i] = random.nextDouble();
         }
 
-        switch (ArrivalOrder.valueOf(arrivalOrder)) {
+        switch (arrivalOrder) {
             case ASCENDING -> Arrays.sort(distances);
             case DESCENDING -> {
                 Arrays.sort(distances);
