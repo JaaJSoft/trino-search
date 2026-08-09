@@ -71,6 +71,10 @@ restart the server.
 
 v1 implements exact KNN. Approximate search (ANN) is planned.
 
+## Benchmarks
+
+Vector search performance is tracked per pull request in [`BENCHMARKS.md`](BENCHMARKS.md).
+
 ## License
 
 Apache License 2.0
