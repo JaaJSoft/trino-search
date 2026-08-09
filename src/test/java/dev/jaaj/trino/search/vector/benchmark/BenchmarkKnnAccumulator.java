@@ -43,9 +43,10 @@ import static io.trino.spi.type.BigintType.BIGINT;
  * per-row bookkeeping in {@code addCandidate}, all together.
  * <p>
  * This is the figure that says how much of the per-row cost the kernel and the heap actually
- * account for. {@code addCandidate} also converts the metric name from a {@code Slice} to a
- * {@code String} and looks the enum up linearly on every single row; whether that matters next to
- * a dimension-768 distance is exactly what this measures.
+ * account for. It is also what settles whether the bookkeeping {@code addCandidate} does around
+ * the distance is worth caring about next to the distance itself: it answered yes for the version
+ * that converted the metric name from a {@code Slice} to a {@code String} and looked the enum up
+ * linearly on every row, which is why that version is gone.
  * <p>
  * Reading this benchmark's number against {@link BenchmarkVectorDistances} to isolate heap
  * maintenance and per-row bookkeeping is tempting but not sound: the two run on different working
