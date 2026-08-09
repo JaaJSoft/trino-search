@@ -55,8 +55,9 @@ public final class ReferenceRowRunner
     {
         if (args.length == 0) {
             System.err.println("usage: ReferenceRowRunner <machine-label> [pull-request-number]");
-            System.err.println("  the machine label is a short free-form name such as 'laptop'; never a hostname,");
-            System.err.println("  because BENCHMARKS.md is committed to a public repository");
+            System.err.println("  the machine label must name one specific machine, e.g. 'laptop-7840hs', and must");
+            System.err.println("  never be reused for a different machine; it must not be a hostname, because");
+            System.err.println("  BENCHMARKS.md is committed to a public repository");
             System.exit(2);
             return;
         }
@@ -78,13 +79,17 @@ public final class ReferenceRowRunner
         List<String> noisy = row.tooNoisyToRecord();
         if (!noisy.isEmpty()) {
             System.err.printf(
-                    "warning: %s exceeded %.0f%% relative error; this run is too noisy to record, "
+                    "warning: %s exceeded %.0f%% ratio relative error; this run is too noisy to record, "
                             + "measure again on a quieter machine%n",
                     noisy,
-                    ReferenceRow.NOISE_THRESHOLD * 100);
+                    ReferenceRow.RATIO_NOISE_THRESHOLD * 100);
         }
 
         System.out.println(row.toMarkdownRow());
+
+        if (!noisy.isEmpty()) {
+            System.exit(1);
+        }
     }
 
     static String machineLabel(String[] args)
@@ -146,31 +151,50 @@ public final class ReferenceRowRunner
     }
 
     /**
-     * A row that cannot be traced back to a commit is worth less than no row, so a missing or
-     * failing git is fatal rather than a placeholder.
+     * A row that cannot be traced back to the code it measured is worth less than no row, so a
+     * missing or failing git is fatal rather than a placeholder. The commit alone is not enough:
+     * measuring after changing a kernel but before committing stamps the new numbers with the old,
+     * innocent-looking sha, so a dirty working tree is appended to the sha rather than hidden.
      */
     private static String currentCommit()
     {
+        String commit = runGit("rev-parse", "--short", "HEAD");
+        boolean dirty = !runGit("status", "--porcelain").isEmpty();
+        return dirty ? commit + "-dirty" : commit;
+    }
+
+    private static String runGit(String... args)
+    {
+        String[] command = new String[args.length + 1];
+        command[0] = "git";
+        System.arraycopy(args, 0, command, 1, args.length);
         try {
-            Process process = new ProcessBuilder("git", "rev-parse", "--short", "HEAD")
+            Process process = new ProcessBuilder(command)
                     .redirectErrorStream(true)
                     .start();
-            String output;
+            StringBuilder output = new StringBuilder();
             try (BufferedReader reader = new BufferedReader(
                     new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-                output = reader.readLine();
+                String line = reader.readLine();
+                while (line != null) {
+                    if (output.length() > 0) {
+                        output.append('\n');
+                    }
+                    output.append(line);
+                    line = reader.readLine();
+                }
             }
-            if (process.waitFor() != 0 || output == null || output.isBlank()) {
-                throw new IllegalStateException("git rev-parse --short HEAD failed: " + output);
+            if (process.waitFor() != 0) {
+                throw new IllegalStateException("git " + String.join(" ", args) + " failed: " + output);
             }
-            return output.trim();
+            return output.toString().trim();
         }
         catch (IOException e) {
-            throw new IllegalStateException("could not run git to read the current commit", e);
+            throw new IllegalStateException("could not run git " + String.join(" ", args), e);
         }
         catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("interrupted while reading the current commit", e);
+            throw new IllegalStateException("interrupted while running git " + String.join(" ", args), e);
         }
     }
 }

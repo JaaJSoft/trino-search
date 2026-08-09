@@ -83,8 +83,9 @@ public class TestReferenceRow
     }
 
     /**
-     * A relative error above the threshold on either half of a measurement is enough: a ratio is
-     * only as trustworthy as its noisier operand.
+     * A relative error above the threshold on either half of a measurement is enough to push the
+     * propagated ratio error above the threshold too: a ratio is only as trustworthy as its
+     * noisier operand.
      */
     @Test
     public void testANoisyMeasurementIsNamed()
@@ -103,10 +104,42 @@ public class TestReferenceRow
         assertThat(noisy.tooNoisyToRecord()).containsExactly("128 double", "128 real");
     }
 
+    /**
+     * Neither half exceeds the old per-half threshold of 15 percent on its own, yet propagating
+     * both through the ratio pushes the combined uncertainty to just under 20 percent, above the
+     * gate. A gate that compared each half separately, as the previous implementation did, would
+     * let this measurement through and publish a ratio with more uncertainty than the file tells
+     * the reader to expect.
+     */
     @Test
-    public void testMaxRelativeErrorTakesTheWorseOfTheTwoScores()
+    public void testTwoHalvesEachQuietCombineIntoANoisyRatio()
     {
-        ReferenceRow.Measurement measurement = new ReferenceRow.Measurement("x", 100.0, 5.0, 200.0, 40.0);
-        assertThat(measurement.maxRelativeError()).isCloseTo(0.2, within(1e-12));
+        ReferenceRow quietHalves = new ReferenceRow(
+                "2026-08-09",
+                "#11",
+                "50e0043",
+                new ReferenceRow.Measurement("128 double", 100.0, 14.0, 200.0, 28.0),
+                new ReferenceRow.Measurement("128 real", 103.0, 1.0, 187.8, 2.0),
+                new ReferenceRow.Measurement("768 double", 523.3, 5.0, 859.3, 8.0),
+                new ReferenceRow.Measurement("768 real", 564.2, 5.0, 829.3, 8.0),
+                "laptop",
+                32,
+                "25.0.1");
+        assertThat(quietHalves.tooNoisyToRecord()).containsExactly("128 double");
+    }
+
+    @Test
+    public void testRatioRelativeErrorPropagatesBothHalves()
+    {
+        ReferenceRow.Measurement measurement = new ReferenceRow.Measurement("x", 100.0, 3.0, 200.0, 4.0);
+        assertThat(measurement.ratioRelativeError()).isCloseTo(Math.sqrt(0.03 * 0.03 + 0.02 * 0.02), within(1e-12));
+    }
+
+    @Test
+    public void testANonFiniteRelativeErrorIsTreatedAsNoisy()
+    {
+        ReferenceRow.Measurement measurement = new ReferenceRow.Measurement("x", 100.0, Double.NaN, 200.0, 4.0);
+        assertThat(Double.isFinite(measurement.ratioRelativeError())).isFalse();
+        assertThat(measurement.ratioRelativeError()).isGreaterThan(ReferenceRow.RATIO_NOISE_THRESHOLD);
     }
 }
