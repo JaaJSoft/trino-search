@@ -72,7 +72,7 @@ proves they still compile and run, and asserts nothing about the numbers.
 A real measurement run:
 
 ```bash
-JAVA_HOME="C:\Program Files\Eclipse Adoptium\jdk-25.0.1.8-hotspot" ./mvnw test-compile exec:java \
+JAVA_HOME="..." ./mvnw test-compile exec:java \
   -Dexec.classpathScope=test \
   -Dexec.mainClass=dev.jaaj.trino.search.vector.benchmark.BenchmarkRunner \
   -Dexec.args="BenchmarkVectorDistances"
