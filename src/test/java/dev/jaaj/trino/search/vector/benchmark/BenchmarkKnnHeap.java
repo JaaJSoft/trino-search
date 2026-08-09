@@ -56,11 +56,13 @@ public class BenchmarkKnnHeap
          */
         RANDOM,
         /**
-         * The worst case: every candidate beats the root, so every add triggers a siftDown.
+         * The best case: the first k candidates are the globally smallest, so every later
+         * candidate is larger than the root and nothing is accepted once the heap is full.
          */
         ASCENDING,
         /**
-         * The best case: nothing is accepted once the heap is full.
+         * The worst case: the first k candidates are the globally largest, so every later
+         * candidate beats the root and every add triggers a siftDown.
          */
         DESCENDING,
     }
@@ -101,7 +103,11 @@ public class BenchmarkKnnHeap
             }
         }
 
-        other = fullHeap();
+        // other must be built from a slice disjoint from the one buildAndMerge rebuilds its
+        // target from, otherwise mergeFrom merges a heap against a copy of itself and the
+        // accept/reject pattern measured is an artefact of the duplication rather than the cost
+        // of merging two independently built partial states.
+        other = heapFrom(BATCH / 2);
     }
 
     /**
@@ -124,7 +130,7 @@ public class BenchmarkKnnHeap
     @Benchmark
     public int buildFullHeap()
     {
-        return fullHeap().size();
+        return heapFrom(0).size();
     }
 
     /**
@@ -135,15 +141,15 @@ public class BenchmarkKnnHeap
     @Benchmark
     public int buildAndMerge()
     {
-        KnnHeap heap = fullHeap();
+        KnnHeap heap = heapFrom(0);
         heap.mergeFrom(other);
         return heap.size();
     }
 
-    private KnnHeap fullHeap()
+    private KnnHeap heapFrom(int offset)
     {
         KnnHeap heap = new KnnHeap(k, false);
-        for (int i = 0; i < k; i++) {
+        for (int i = offset; i < offset + k; i++) {
             heap.add(keys[i], distances[i]);
         }
         return heap;
