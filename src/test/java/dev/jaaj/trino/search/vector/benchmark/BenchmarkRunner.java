@@ -57,8 +57,11 @@ public final class BenchmarkRunner
      * {@code jmh.separateClasspathJAR} is forced on: JMH then writes the classpath into a
      * manifest-only jar and launches the fork with {@code -cp} pointing at that jar instead of
      * the raw, and much longer, class path string.
+     * <p>
+     * Package private rather than private: {@link ReferenceRowRunner} also drives JMH through
+     * {@code exec:java} and needs the identical repair.
      */
-    private static void repairForkClasspath()
+    static void repairForkClasspath()
             throws RunnerException
     {
         if (!(Thread.currentThread().getContextClassLoader() instanceof URLClassLoader classLoader)) {

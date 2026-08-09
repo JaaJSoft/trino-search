@@ -1,0 +1,176 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package dev.jaaj.trino.search.vector.benchmark;
+
+import org.openjdk.jmh.results.Result;
+import org.openjdk.jmh.results.RunResult;
+import org.openjdk.jmh.runner.Runner;
+import org.openjdk.jmh.runner.RunnerException;
+import org.openjdk.jmh.runner.options.ChainedOptionsBuilder;
+import org.openjdk.jmh.runner.options.OptionsBuilder;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Measures the four reference points and prints the {@code BENCHMARKS.md} row for them.
+ * <p>
+ * Eight JMH configurations instead of the full grid's fifty-four is what brings a recording down
+ * from a quarter of an hour to a few minutes, which is the difference between a habit that
+ * survives and one abandoned by the third pull request. Each benchmark keeps its own fork, warmup
+ * and iteration counts, so a recorded row is produced under the same conditions as a full run.
+ * <p>
+ * It prints and does not write: re-measuring must not append a second row, and pasting by hand
+ * forces whoever records it to look at what they are adding.
+ */
+public final class ReferenceRowRunner
+{
+    private static final String METRIC = "euclidean";
+    private static final String K = "10";
+    private static final int SMALL_DIMENSION = 128;
+    private static final int LARGE_DIMENSION = 768;
+
+    private ReferenceRowRunner() {}
+
+    public static void main(String[] args)
+            throws RunnerException
+    {
+        if (args.length == 0) {
+            System.err.println("usage: ReferenceRowRunner <machine-label> [pull-request-number]");
+            System.err.println("  the machine label is a short free-form name such as 'laptop'; never a hostname,");
+            System.err.println("  because BENCHMARKS.md is committed to a public repository");
+            System.exit(2);
+            return;
+        }
+
+        BenchmarkRunner.repairForkClasspath();
+
+        ReferenceRow row = new ReferenceRow(
+                LocalDate.now().toString(),
+                pullRequestLabel(args),
+                currentCommit(),
+                measure("128 double", SMALL_DIMENSION, "doubleVectors", "doubleRows"),
+                measure("128 real", SMALL_DIMENSION, "realVectors", "realRows"),
+                measure("768 double", LARGE_DIMENSION, "doubleVectors", "doubleRows"),
+                measure("768 real", LARGE_DIMENSION, "realVectors", "realRows"),
+                machineLabel(args),
+                Runtime.getRuntime().availableProcessors(),
+                System.getProperty("java.version"));
+
+        List<String> noisy = row.tooNoisyToRecord();
+        if (!noisy.isEmpty()) {
+            System.err.printf(
+                    "warning: %s exceeded %.0f%% relative error; this run is too noisy to record, "
+                            + "measure again on a quieter machine%n",
+                    noisy,
+                    ReferenceRow.NOISE_THRESHOLD * 100);
+        }
+
+        System.out.println(row.toMarkdownRow());
+    }
+
+    static String machineLabel(String[] args)
+    {
+        return args[0];
+    }
+
+    /**
+     * Accepts "11" and "#11" alike, because both are natural to type and the column is only
+     * sortable and greppable if they land in the file identically.
+     */
+    static String pullRequestLabel(String[] args)
+    {
+        if (args.length < 2) {
+            return "#TBD";
+        }
+        return "#" + args[1].replace("#", "");
+    }
+
+    private static ReferenceRow.Measurement measure(
+            String label,
+            int dimension,
+            String kernelMethod,
+            String accumulatorMethod)
+            throws RunnerException
+    {
+        Result<?> kernel = runOne(
+                BenchmarkVectorDistances.class,
+                kernelMethod,
+                Map.of("dimension", String.valueOf(dimension), "metricName", METRIC));
+        Result<?> accumulator = runOne(
+                BenchmarkKnnAccumulator.class,
+                accumulatorMethod,
+                Map.of("dimension", String.valueOf(dimension), "metricName", METRIC, "k", K));
+        return new ReferenceRow.Measurement(
+                label,
+                kernel.getScore(),
+                kernel.getScoreError(),
+                accumulator.getScore(),
+                accumulator.getScoreError());
+    }
+
+    private static Result<?> runOne(Class<?> benchmarkClass, String method, Map<String, String> params)
+            throws RunnerException
+    {
+        ChainedOptionsBuilder builder = new OptionsBuilder()
+                .include(benchmarkClass.getName() + "\\." + method + "$")
+                .timeUnit(TimeUnit.NANOSECONDS)
+                .shouldFailOnError(true);
+        params.forEach(builder::param);
+
+        Collection<RunResult> results = new Runner(builder.build()).run();
+        if (results.size() != 1) {
+            throw new IllegalStateException(
+                    "expected exactly one result for %s.%s with %s, got %s"
+                            .formatted(benchmarkClass.getSimpleName(), method, params, results.size()));
+        }
+        return results.iterator().next().getPrimaryResult();
+    }
+
+    /**
+     * A row that cannot be traced back to a commit is worth less than no row, so a missing or
+     * failing git is fatal rather than a placeholder.
+     */
+    private static String currentCommit()
+    {
+        try {
+            Process process = new ProcessBuilder("git", "rev-parse", "--short", "HEAD")
+                    .redirectErrorStream(true)
+                    .start();
+            String output;
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                output = reader.readLine();
+            }
+            if (process.waitFor() != 0 || output == null || output.isBlank()) {
+                throw new IllegalStateException("git rev-parse --short HEAD failed: " + output);
+            }
+            return output.trim();
+        }
+        catch (IOException e) {
+            throw new IllegalStateException("could not run git to read the current commit", e);
+        }
+        catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while reading the current commit", e);
+        }
+    }
+}
