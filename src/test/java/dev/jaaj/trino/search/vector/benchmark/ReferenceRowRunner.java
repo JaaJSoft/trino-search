@@ -70,10 +70,11 @@ public final class ReferenceRowRunner
 
         BenchmarkRunner.repairForkClasspath();
 
+        warnIfWorkingTreeIsDirty();
+
         ReferenceRow row = new ReferenceRow(
                 LocalDate.now().toString(),
                 pullRequestLabel(args),
-                currentCommit(),
                 measure("128 double", SMALL_DIMENSION, "doubleVectors", "doubleRows"),
                 measure("128 real", SMALL_DIMENSION, "realVectors", "realRows"),
                 measure("768 double", LARGE_DIMENSION, "doubleVectors", "doubleRows"),
@@ -230,16 +231,18 @@ public final class ReferenceRowRunner
     }
 
     /**
-     * A row that cannot be traced back to the code it measured is worth less than no row, so a
-     * missing or failing git is fatal rather than a placeholder. The commit alone is not enough:
-     * measuring after changing a kernel but before committing stamps the new numbers with the old,
-     * innocent-looking sha, so a dirty working tree is appended to the sha rather than hidden.
+     * The row names a pull request, not a commit, so nothing in it can reveal that the numbers
+     * were taken on code that was never pushed. Measuring after changing a kernel but before
+     * committing is the mistake this catches, and the warning is the only trace left of it, so a
+     * missing or failing git stays fatal rather than becoming a silent skip.
      */
-    private static String currentCommit()
+    private static void warnIfWorkingTreeIsDirty()
     {
-        String commit = runGit("rev-parse", "--short", "HEAD");
-        boolean dirty = !runGit("status", "--porcelain").isEmpty();
-        return dirty ? commit + "-dirty" : commit;
+        if (!runGit("status", "--porcelain").isEmpty()) {
+            System.err.println(
+                    "warning: the working tree has uncommitted changes, so this row measures code "
+                            + "that is not in the pull request it will name");
+        }
     }
 
     private static String runGit(String... args)

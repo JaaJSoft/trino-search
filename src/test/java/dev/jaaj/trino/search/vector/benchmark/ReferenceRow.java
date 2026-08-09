@@ -18,8 +18,9 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * One row of {@code BENCHMARKS.md}: the four reference measurements of a single commit, plus the
- * provenance that makes them readable later.
+ * One row of {@code BENCHMARKS.md}: the four reference measurements taken for one pull request,
+ * plus the provenance that makes them readable later. The pull request is the only identifier
+ * worth carrying, since a squash merge leaves nothing of the branch commit a row could name.
  * <p>
  * Absolute nanoseconds from two different machines are not comparable, so every row carries the
  * ratio of the per-row cost to the kernel cost as well. Both halves of a ratio were measured on
@@ -35,7 +36,6 @@ import java.util.Locale;
 public record ReferenceRow(
         String date,
         String pullRequest,
-        String commit,
         Measurement smallDouble,
         Measurement smallReal,
         Measurement largeDouble,
@@ -88,10 +88,9 @@ public record ReferenceRow(
     {
         return String.format(
                 Locale.ROOT,
-                "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %d | %s |",
+                "| %s | %s | %s | %s | %s | %s | %s | %s | %d | %s |",
                 date,
                 pullRequest,
-                commit,
                 cell(smallDouble),
                 cell(smallReal),
                 cell(largeDouble),
