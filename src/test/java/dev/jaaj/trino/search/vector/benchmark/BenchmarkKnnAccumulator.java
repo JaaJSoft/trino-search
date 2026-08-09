@@ -34,7 +34,6 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 
-import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 import static io.trino.spi.type.BigintType.BIGINT;
@@ -47,6 +46,14 @@ import static io.trino.spi.type.BigintType.BIGINT;
  * account for. {@code addCandidate} also converts the metric name from a {@code Slice} to a
  * {@code String} and looks the enum up linearly on every single row; whether that matters next to
  * a dimension-768 distance is exactly what this measures.
+ * <p>
+ * Reading this benchmark's number against {@link BenchmarkVectorDistances} to isolate heap
+ * maintenance and per-row bookkeeping is tempting but not sound: the two run on different working
+ * sets. This one streams {@link #ROWS} base vectors against a single query vector that stays
+ * resident, while the kernel benchmark cycles a small pool with both operands rotating and
+ * deliberately cache-resident. The difference between the two carries a memory-locality term in an
+ * indeterminate direction, so it is an upper bound on the bookkeeping cost, not a measurement of
+ * it.
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
@@ -83,12 +90,7 @@ public class BenchmarkKnnAccumulator
         doubleQuery = VectorBlocks.doubleVector(dataset.queries()[0]);
         realQuery = VectorBlocks.realVector(dataset.queries()[0]);
         metricSlice = Slices.utf8Slice(metricName);
-
-        long[] ids = new long[ROWS];
-        for (int i = 0; i < ROWS; i++) {
-            ids[i] = i;
-        }
-        keys = new LongArrayBlock(ROWS, Optional.empty(), ids);
+        keys = VectorBlocks.sequentialKeys(ROWS);
     }
 
     @Benchmark

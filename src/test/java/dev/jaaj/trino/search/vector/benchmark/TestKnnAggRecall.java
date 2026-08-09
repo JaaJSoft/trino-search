@@ -23,7 +23,6 @@ import io.trino.spi.block.LongArrayBlock;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
-import java.util.Optional;
 
 import static dev.jaaj.trino.search.vector.benchmark.VectorDataset.Regime.CLUSTERED;
 import static dev.jaaj.trino.search.vector.benchmark.VectorDataset.Regime.UNIFORM;
@@ -48,7 +47,7 @@ public class TestKnnAggRecall
         for (VectorDataset.Regime regime : List.of(CLUSTERED, UNIFORM)) {
             VectorDataset dataset = VectorDataset.generate(regime, BASE_SIZE, QUERY_COUNT, DIMENSION, 11L);
             for (BruteForce.Distance distance : BruteForce.Distance.values()) {
-                assertThat(meanRecall(dataset, distance, false))
+                assertThat(meanRecall(dataset, distance, false, false))
                         .as("%s / %s", regime, distance.sqlName())
                         .isEqualTo(1.0);
             }
@@ -61,14 +60,49 @@ public class TestKnnAggRecall
         for (VectorDataset.Regime regime : List.of(CLUSTERED, UNIFORM)) {
             VectorDataset dataset = VectorDataset.generate(regime, BASE_SIZE, QUERY_COUNT, DIMENSION, 12L);
             for (BruteForce.Distance distance : BruteForce.Distance.values()) {
-                assertThat(meanRecall(dataset, distance, true))
+                assertThat(meanRecall(dataset, distance, true, false))
                         .as("%s / %s", regime, distance.sqlName())
                         .isEqualTo(1.0);
             }
         }
     }
 
-    private static double meanRecall(VectorDataset dataset, BruteForce.Distance distance, boolean realVectors)
+    /**
+     * A single partition never calls {@code @CombineFunction}: the input rows all land in one
+     * {@code KnnState} and there is nothing to merge. Splitting the base vectors across two states
+     * and merging them with {@code combine} before draining is what would catch a combine that
+     * drops candidates or a serialized state that loses part of the heap.
+     */
+    @Test
+    public void testExactAggregationHasPerfectRecallOnDoubleVectorsAcrossCombine()
+    {
+        for (VectorDataset.Regime regime : List.of(CLUSTERED, UNIFORM)) {
+            VectorDataset dataset = VectorDataset.generate(regime, BASE_SIZE, QUERY_COUNT, DIMENSION, 11L);
+            for (BruteForce.Distance distance : BruteForce.Distance.values()) {
+                assertThat(meanRecall(dataset, distance, false, true))
+                        .as("%s / %s", regime, distance.sqlName())
+                        .isEqualTo(1.0);
+            }
+        }
+    }
+
+    /**
+     * Real-vector counterpart of {@link #testExactAggregationHasPerfectRecallOnDoubleVectorsAcrossCombine}.
+     */
+    @Test
+    public void testExactAggregationHasPerfectRecallOnRealVectorsAcrossCombine()
+    {
+        for (VectorDataset.Regime regime : List.of(CLUSTERED, UNIFORM)) {
+            VectorDataset dataset = VectorDataset.generate(regime, BASE_SIZE, QUERY_COUNT, DIMENSION, 12L);
+            for (BruteForce.Distance distance : BruteForce.Distance.values()) {
+                assertThat(meanRecall(dataset, distance, true, true))
+                        .as("%s / %s", regime, distance.sqlName())
+                        .isEqualTo(1.0);
+            }
+        }
+    }
+
+    private static double meanRecall(VectorDataset dataset, BruteForce.Distance distance, boolean realVectors, boolean acrossCombine)
     {
         // The array(real) path computes from float-rounded components, so the oracle has to see
         // the same values or it would rank near-ties differently.
@@ -78,18 +112,16 @@ public class TestKnnAggRecall
                 ? VectorBlocks.realVectors(dataset.base())
                 : VectorBlocks.doubleVectors(dataset.base());
 
-        long[] ids = new long[base.length];
-        for (int i = 0; i < ids.length; i++) {
-            ids[i] = i;
-        }
-        LongArrayBlock keys = new LongArrayBlock(ids.length, Optional.empty(), ids);
+        LongArrayBlock keys = VectorBlocks.sequentialKeys(base.length);
 
         double total = 0;
         for (int q = 0; q < queries.length; q++) {
             Block queryBlock = realVectors
                     ? VectorBlocks.realVector(dataset.queries()[q])
                     : VectorBlocks.doubleVector(dataset.queries()[q]);
-            double[] returned = runAggregation(keys, baseBlocks, queryBlock, distance, realVectors);
+            double[] returned = acrossCombine
+                    ? runAggregationAcrossCombine(keys, baseBlocks, queryBlock, distance, realVectors)
+                    : runAggregation(keys, baseBlocks, queryBlock, distance, realVectors);
             total += Recall.at(
                     K,
                     returned,
@@ -107,7 +139,48 @@ public class TestKnnAggRecall
             boolean realVectors)
     {
         KnnState state = new KnnStateFactory(BIGINT).createSingleState();
-        for (int i = 0; i < baseBlocks.length; i++) {
+        feedInput(state, keys, baseBlocks, 0, baseBlocks.length, queryBlock, distance, realVectors);
+        return drainDistances(state);
+    }
+
+    /**
+     * Splits the base vectors across two states fed independently, then merges them with the
+     * aggregation's {@code @CombineFunction} before draining: the shape a partial-per-split plus
+     * final aggregation plan produces, which {@link #runAggregation} never exercises.
+     */
+    private static double[] runAggregationAcrossCombine(
+            LongArrayBlock keys,
+            Block[] baseBlocks,
+            Block queryBlock,
+            BruteForce.Distance distance,
+            boolean realVectors)
+    {
+        int split = baseBlocks.length / 2;
+        KnnState state = new KnnStateFactory(BIGINT).createSingleState();
+        feedInput(state, keys, baseBlocks, 0, split, queryBlock, distance, realVectors);
+        KnnState otherState = new KnnStateFactory(BIGINT).createSingleState();
+        feedInput(otherState, keys, baseBlocks, split, baseBlocks.length, queryBlock, distance, realVectors);
+
+        if (realVectors) {
+            KnnAggregation.OfRealVectors.combine(state, otherState);
+        }
+        else {
+            KnnAggregation.OfDoubleVectors.combine(state, otherState);
+        }
+        return drainDistances(state);
+    }
+
+    private static void feedInput(
+            KnnState state,
+            LongArrayBlock keys,
+            Block[] baseBlocks,
+            int fromInclusive,
+            int toExclusive,
+            Block queryBlock,
+            BruteForce.Distance distance,
+            boolean realVectors)
+    {
+        for (int i = fromInclusive; i < toExclusive; i++) {
             if (realVectors) {
                 KnnAggregation.OfRealVectors.input(
                         BIGINT, state, keys, i, baseBlocks[i], queryBlock, K, Slices.utf8Slice(distance.sqlName()));
@@ -117,7 +190,10 @@ public class TestKnnAggRecall
                         BIGINT, state, keys, i, baseBlocks[i], queryBlock, K, Slices.utf8Slice(distance.sqlName()));
             }
         }
+    }
 
+    private static double[] drainDistances(KnnState state)
+    {
         List<KnnHeap.Neighbour> neighbours = state.getHeap().drainSorted();
         double[] distances = new double[neighbours.size()];
         for (int i = 0; i < distances.length; i++) {

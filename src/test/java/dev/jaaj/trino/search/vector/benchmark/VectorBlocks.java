@@ -69,6 +69,19 @@ public final class VectorBlocks
     }
 
     /**
+     * Sequential {@code 0..count-1} keys, the key column {@code KnnAggregation.input} expects
+     * when the row order itself is the identity to recover from the heap.
+     */
+    public static LongArrayBlock sequentialKeys(int count)
+    {
+        long[] ids = new long[count];
+        for (int i = 0; i < count; i++) {
+            ids[i] = i;
+        }
+        return new LongArrayBlock(count, Optional.empty(), ids);
+    }
+
+    /**
      * The {@code array(real)} path computes distances from float-rounded components. An oracle
      * fed the original doubles would rank near-ties differently and report a recall below one for
      * a perfectly correct result, so it must be given these values instead.

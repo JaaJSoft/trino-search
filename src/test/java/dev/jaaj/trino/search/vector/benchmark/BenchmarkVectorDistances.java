@@ -36,6 +36,10 @@ import static dev.jaaj.trino.search.vector.VectorReader.REAL_READER;
 /**
  * The metric kernel on its own, called through {@link Metric#compute} because {@code VectorMath}
  * is package private and {@code Metric} is the entry point the aggregation actually uses.
+ * <p>
+ * The {@value #PAIR_POOL_SIZE}-pair pool is deliberately cache-resident, so this benchmark is not
+ * representative of streaming a column and is not directly comparable to
+ * {@link BenchmarkKnnAccumulator}, which does stream its base vectors.
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)

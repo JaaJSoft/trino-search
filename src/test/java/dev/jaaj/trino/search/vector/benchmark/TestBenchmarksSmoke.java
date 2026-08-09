@@ -14,6 +14,7 @@
 package dev.jaaj.trino.search.vector.benchmark;
 
 import org.junit.jupiter.api.Test;
+import org.openjdk.jmh.annotations.Param;
 import org.openjdk.jmh.results.RunResult;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -22,7 +23,10 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 import org.openjdk.jmh.runner.options.TimeValue;
 import org.openjdk.jmh.runner.options.VerboseMode;
 
+import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -41,6 +45,8 @@ public class TestBenchmarksSmoke
     static void smokeRun(Class<?> benchmarkClass, Map<String, String> params)
             throws RunnerException
     {
+        requireAllParamsPinned(benchmarkClass, params);
+
         ChainedOptionsBuilder builder = new OptionsBuilder()
                 .include(benchmarkClass.getName() + "\\..*")
                 // forks(0) runs in the Surefire JVM, which already has the incubator vector
@@ -55,6 +61,29 @@ public class TestBenchmarksSmoke
 
         Collection<RunResult> results = new Runner(builder.build()).run();
         assertThat(results).as("no benchmark matched %s", benchmarkClass.getName()).isNotEmpty();
+    }
+
+    /**
+     * An {@code @Param} field left out of {@code params} keeps its full {@code {"a", "b", "c"}}
+     * array instead of collapsing to the single pinned value, so JMH silently expands the smoke
+     * run to the cartesian product of every unpinned axis. For a benchmark whose largest shape is
+     * expensive to materialise (for example {@link BenchmarkKnnAggQuery}'s million-row shape) that
+     * turns an ordinary smoke test into an out-of-memory kill or a CI timeout, with a stack trace
+     * pointing at JMH rather than at the missing map entry.
+     */
+    private static void requireAllParamsPinned(Class<?> benchmarkClass, Map<String, String> params)
+    {
+        List<String> missing = new ArrayList<>();
+        for (Field field : benchmarkClass.getDeclaredFields()) {
+            if (field.isAnnotationPresent(Param.class) && !params.containsKey(field.getName())) {
+                missing.add(field.getName());
+            }
+        }
+        assertThat(missing)
+                .as("%s has @Param field(s) not pinned by the smoke test's params map; "
+                        + "an unpinned axis keeps its full value range and expands the smoke run "
+                        + "to the cartesian product of every unpinned axis", benchmarkClass.getName())
+                .isEmpty();
     }
 
     @Test
