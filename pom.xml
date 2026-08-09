@@ -92,6 +92,15 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- Writable catalog for the end to end benchmark: the dataset is materialized once at
+             setup so vector construction is never inside a measurement. -->
+        <dependency>
+            <groupId>io.trino</groupId>
+            <artifactId>trino-memory</artifactId>
+            <version>${dep.trino.version}</version>
+            <scope>test</scope>
+        </dependency>
+
         <dependency>
             <groupId>io.trino</groupId>
             <artifactId>trino-testing</artifactId>

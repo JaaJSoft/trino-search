@@ -77,4 +77,35 @@ public class TestBenchmarksSmoke
     {
         smokeRun(BenchmarkKnnAccumulator.class, Map.of("dimension", "8", "metricName", "euclidean", "k", "10"));
     }
+
+    @Test
+    public void testKnnAggQuery()
+            throws RunnerException
+    {
+        smokeRun(BenchmarkKnnAggQuery.class, Map.of("shape", "1000x8", "metricName", "euclidean"));
+    }
+
+    /**
+     * The benchmark is only worth reading if the plan actually splits into a partial aggregation
+     * per split plus a final one that merges them: that is the only shape exercising
+     * KnnStateSerializer and the combine function. MemoryConfig defaults splits-per-node to the
+     * processor count, so this holds without configuration, but it is asserted rather than
+     * assumed.
+     */
+    @Test
+    public void testKnnAggQueryPlanHasPartialAndFinalAggregation()
+    {
+        BenchmarkKnnAggQuery benchmark = new BenchmarkKnnAggQuery();
+        benchmark.shape = "1000x8";
+        benchmark.metricName = "euclidean";
+        benchmark.setUp();
+        try {
+            String plan = benchmark.explainKnnAgg();
+            assertThat(plan).contains("PARTIAL");
+            assertThat(plan).contains("FINAL");
+        }
+        finally {
+            benchmark.tearDown();
+        }
+    }
 }
