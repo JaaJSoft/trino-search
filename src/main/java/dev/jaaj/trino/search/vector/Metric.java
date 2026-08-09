@@ -13,6 +13,8 @@
  */
 package dev.jaaj.trino.search.vector;
 
+import io.airlift.slice.Slice;
+import io.airlift.slice.Slices;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
 
@@ -60,15 +62,33 @@ public enum Metric
     };
 
     private final String sqlName;
+    private final Slice sqlNameUtf8;
     private final boolean higherIsCloser;
 
     Metric(String sqlName, boolean higherIsCloser)
     {
         this.sqlName = sqlName;
+        this.sqlNameUtf8 = Slices.utf8Slice(sqlName);
         this.higherIsCloser = higherIsCloser;
     }
 
     public abstract double compute(Block first, Block second, VectorReader reader);
+
+    public String sqlName()
+    {
+        return sqlName;
+    }
+
+    /**
+     * Whether a raw UTF-8 name is the canonical spelling of this metric, answered without decoding
+     * it, for callers that ask once per row. A false result only means the name is not the
+     * canonical spelling: {@code 'EUCLIDEAN'} still resolves to {@link #EUCLIDEAN} through
+     * {@link #fromName}.
+     */
+    public boolean hasCanonicalName(Slice name)
+    {
+        return sqlNameUtf8.equals(name);
+    }
 
     /**
      * Dot product is a similarity, every other metric is a distance. The heap needs the
@@ -77,6 +97,11 @@ public enum Metric
     public boolean higherIsCloser()
     {
         return higherIsCloser;
+    }
+
+    public static Metric fromName(Slice name)
+    {
+        return fromName(name.toStringUtf8());
     }
 
     public static Metric fromName(String name)

@@ -346,4 +346,32 @@ public class TestKnnAggregation
                 "SELECT knn_agg(id, v, ARRAY[0.0, 0.0], 2, CASE WHEN id = 'a' THEN 'dot_product' ELSE 'euclidean' END) FROM " + POINTS,
                 ".*metric must be constant within a group of knn_agg.*");
     }
+
+    @Test
+    public void testMetricNameIsCaseInsensitive()
+    {
+        assertQuery(
+                "SELECT transform(knn_agg(id, v, ARRAY[0.0, 0.0], 2, 'Euclidean'), x -> x[1]) FROM " + POINTS,
+                "SELECT ARRAY['a', 'b']");
+    }
+
+    @Test
+    public void testTheSameMetricSpelledDifferentlyWithinAGroupIsAccepted()
+    {
+        // 'metric must be constant within a group' is about the metric, not about the spelling of
+        // its name: two spellings that resolve to the same Metric are one metric. The per-row
+        // check compares raw name bytes to stay allocation free, so this is the case that tells
+        // apart a byte comparison used as a fast path from a byte comparison used as the answer.
+        //
+        // The row that creates the state is the one row whose name is never compared to anything,
+        // so the non-canonical spelling must be on the others: three of the four rows carry it,
+        // which puts it on a compared row whichever row the engine reads first.
+        assertQuery(
+                """
+                SELECT transform(
+                        knn_agg(id, v, ARRAY[0.0, 0.0], 2, CASE WHEN id = 'a' THEN 'euclidean' ELSE 'EUCLIDEAN' END),
+                        x -> x[1])
+                FROM """ + POINTS,
+                "SELECT ARRAY['a', 'b']");
+    }
 }

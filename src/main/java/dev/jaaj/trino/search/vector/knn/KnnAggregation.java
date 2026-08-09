@@ -161,14 +161,23 @@ public final class KnnAggregation
                     "k of knn_agg must be less than or equal to %s; found %s".formatted(MAX_K, k));
         }
 
-        Metric metric = Metric.fromName(metricName.toStringUtf8());
+        Metric metric;
         if (state.getHeap() == null) {
+            metric = Metric.fromName(metricName);
             state.setHeap(new KnnHeap((int) k, metric.higherIsCloser()));
             state.setK((int) k);
-            state.setMetricName(metricName.toStringUtf8());
+            state.setMetric(metric);
         }
         else {
-            checkConstantWithinGroup(state.getK(), (int) k, state.getMetricName(), metricName.toStringUtf8());
+            metric = state.getMetric();
+            // Resolving the name costs two String allocations and a scan of the enum, on a path
+            // the engine walks once per row for an argument that is constant in every real query.
+            // Comparing the raw bytes against the canonical spelling answers the same question
+            // for free. Anything else, including another spelling of the same metric, falls
+            // through to the resolving check.
+            if (state.getK() != (int) k || !metric.hasCanonicalName(metricName)) {
+                checkConstantWithinGroup(state.getK(), (int) k, metric, Metric.fromName(metricName));
+            }
         }
 
         if (vector.getPositionCount() != queryVector.getPositionCount()) {
@@ -190,10 +199,10 @@ public final class KnnAggregation
         if (state.getHeap() == null) {
             state.setHeap(other);
             state.setK(otherState.getK());
-            state.setMetricName(otherState.getMetricName());
+            state.setMetric(otherState.getMetric());
             return;
         }
-        checkConstantWithinGroup(state.getK(), otherState.getK(), state.getMetricName(), otherState.getMetricName());
+        checkConstantWithinGroup(state.getK(), otherState.getK(), state.getMetric(), otherState.getMetric());
         state.mergeIntoHeap(other);
     }
 
@@ -204,17 +213,17 @@ public final class KnnAggregation
      * (closer-is-smaller vs. closer-is-larger), which for a mismatched metric returns the
      * farthest neighbours under a plausible-looking label instead of failing.
      */
-    private static void checkConstantWithinGroup(int k, int otherK, String metricName, String otherMetricName)
+    private static void checkConstantWithinGroup(int k, int otherK, Metric metric, Metric otherMetric)
     {
         if (k != otherK) {
             throw new TrinoException(
                     INVALID_FUNCTION_ARGUMENT,
                     "k must be constant within a group of knn_agg, found %s and %s".formatted(k, otherK));
         }
-        if (Metric.fromName(metricName) != Metric.fromName(otherMetricName)) {
+        if (metric != otherMetric) {
             throw new TrinoException(
                     INVALID_FUNCTION_ARGUMENT,
-                    "metric must be constant within a group of knn_agg, found '%s' and '%s'".formatted(metricName, otherMetricName));
+                    "metric must be constant within a group of knn_agg, found '%s' and '%s'".formatted(metric.sqlName(), otherMetric.sqlName()));
         }
     }
 

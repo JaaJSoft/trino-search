@@ -70,7 +70,7 @@ public final class KnnStateSerializer
 
         ((RowBlockBuilder) out).buildEntry(fieldBuilders -> {
             BIGINT.writeLong(fieldBuilders.get(0), state.getK());
-            VARCHAR.writeString(fieldBuilders.get(1), state.getMetricName());
+            VARCHAR.writeString(fieldBuilders.get(1), state.getMetric().sqlName());
             ((ArrayBlockBuilder) fieldBuilders.get(2)).buildEntry(elementBuilder -> {
                 for (KnnHeap.Neighbour neighbour : heap.drainSorted()) {
                     ((RowBlockBuilder) elementBuilder).buildEntry(neighbourFields -> {
@@ -89,16 +89,16 @@ public final class KnnStateSerializer
         int offset = row.getRawIndex();
 
         int k = (int) BIGINT.getLong(row.getRawFieldBlock(0), offset);
-        String metricName = VARCHAR.getSlice(row.getRawFieldBlock(1), offset).toStringUtf8();
+        Metric metric = Metric.fromName(VARCHAR.getSlice(row.getRawFieldBlock(1), offset));
         state.setK(k);
-        state.setMetricName(metricName);
+        state.setMetric(metric);
 
         // Trino's generated addIntermediateAsCombine reuses one scratch state object for
         // every non-null position in an intermediate block, calling deserialize(...) then
         // combine(...) once per position. A heap kept from a previous call here would leak
         // that earlier position's neighbours into this one, so every call must start from a
         // brand new heap, never the one already attached to state (if any).
-        state.setHeap(new KnnHeap(k, Metric.fromName(metricName).higherIsCloser()));
+        state.setHeap(new KnnHeap(k, metric.higherIsCloser()));
 
         Block neighbours = neighbourArrayType.getObject(row.getRawFieldBlock(2), offset);
         for (int i = 0; i < neighbours.getPositionCount(); i++) {

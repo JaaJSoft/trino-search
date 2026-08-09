@@ -13,6 +13,7 @@
  */
 package dev.jaaj.trino.search.vector.knn;
 
+import dev.jaaj.trino.search.vector.Metric;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.trino.spi.block.ValueBlock;
 import io.trino.spi.function.AccumulatorStateFactory;
@@ -53,7 +54,7 @@ public final class KnnStateFactory
 
         private KnnHeap heap;
         private int k;
-        private String metricName;
+        private Metric metric;
 
         @Override
         @SuppressFBWarnings(
@@ -100,15 +101,15 @@ public final class KnnStateFactory
         }
 
         @Override
-        public String getMetricName()
+        public Metric getMetric()
         {
-            return metricName;
+            return metric;
         }
 
         @Override
-        public void setMetricName(String metricName)
+        public void setMetric(Metric metric)
         {
-            this.metricName = metricName;
+            this.metric = metric;
         }
 
         @Override
@@ -125,7 +126,7 @@ public final class KnnStateFactory
 
         private KnnHeap[] heaps = new KnnHeap[0];
         private int[] ks = new int[0];
-        private String[] metricNames = new String[0];
+        private Metric[] metrics = new Metric[0];
         private int groupId;
         private long heapsSizeInBytes;
 
@@ -141,7 +142,7 @@ public final class KnnStateFactory
             if (size > heaps.length) {
                 heaps = Arrays.copyOf(heaps, size);
                 ks = Arrays.copyOf(ks, size);
-                metricNames = Arrays.copyOf(metricNames, size);
+                metrics = Arrays.copyOf(metrics, size);
             }
         }
 
@@ -205,15 +206,15 @@ public final class KnnStateFactory
         }
 
         @Override
-        public String getMetricName()
+        public Metric getMetric()
         {
-            return metricNames[groupId];
+            return metrics[groupId];
         }
 
         @Override
-        public void setMetricName(String metricName)
+        public void setMetric(Metric metric)
         {
-            metricNames[groupId] = metricName;
+            metrics[groupId] = metric;
         }
 
         /**
@@ -223,7 +224,7 @@ public final class KnnStateFactory
         @Override
         public long getEstimatedSize()
         {
-            return INSTANCE_SIZE + sizeOf(heaps) + sizeOf(ks) + sizeOf(metricNames) + heapsSizeInBytes;
+            return INSTANCE_SIZE + sizeOf(heaps) + sizeOf(ks) + sizeOf(metrics) + heapsSizeInBytes;
         }
     }
 }

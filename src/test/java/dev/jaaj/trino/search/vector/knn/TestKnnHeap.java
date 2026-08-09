@@ -318,6 +318,75 @@ public class TestKnnHeap
     }
 
     @Test
+    public void testWouldAcceptAnyCandidateWhileNotFull()
+    {
+        KnnHeap heap = new KnnHeap(2, false);
+        add(heap, "a", 1.0);
+
+        assertThat(heap.wouldAccept(99.0)).isTrue();
+    }
+
+    @Test
+    public void testWouldAcceptOnlyBetterCandidatesOnceFull()
+    {
+        KnnHeap heap = new KnnHeap(2, false);
+        add(heap, "a", 1.0);
+        add(heap, "b", 2.0);
+
+        assertThat(heap.wouldAccept(1.5)).isTrue();
+        assertThat(heap.wouldAccept(2.0)).isFalse();
+        assertThat(heap.wouldAccept(3.0)).isFalse();
+    }
+
+    @Test
+    public void testWouldAcceptFollowsTheDirectionWhenHigherIsCloser()
+    {
+        KnnHeap heap = new KnnHeap(2, true);
+        add(heap, "a", 1.0);
+        add(heap, "b", 2.0);
+
+        assertThat(heap.wouldAccept(3.0)).isTrue();
+        assertThat(heap.wouldAccept(0.5)).isFalse();
+    }
+
+    @Test
+    public void testWouldAcceptAgreesWithAdd()
+    {
+        // add() skips copying the key when wouldAccept() says no, so the two disagreeing means
+        // neighbours that belong in the result are dropped without a trace. Only running both
+        // against the same stream of candidates catches that.
+        KnnHeap heap = new KnnHeap(5, false);
+        Random random = new Random(7);
+        for (int i = 0; i < 500; i++) {
+            double distance = random.nextDouble() * 100;
+            boolean accepted = heap.wouldAccept(distance);
+
+            List<Long> before = longKeysOf(heap);
+            add(heap, i, distance);
+
+            assertThat(longKeysOf(heap).equals(before)).isEqualTo(!accepted);
+        }
+    }
+
+    @Test
+    public void testDroppedCandidatesRetainNothing()
+    {
+        // Skipping the copy for a losing candidate is not observable on its own, since a copy that
+        // was made and dropped was never counted either. What must hold either way is this: a heap
+        // fed nothing but losers reports the size it had before them.
+        ValueBlock page = varcharPage();
+        KnnHeap heap = new KnnHeap(1, false);
+        heap.add(page, 0, 1.0);
+        long afterFirst = heap.estimatedSizeInBytes();
+
+        for (int i = 1; i < PAGE_POSITIONS; i++) {
+            heap.add(page, i, 2.0);
+        }
+
+        assertThat(heap.estimatedSizeInBytes()).isEqualTo(afterFirst);
+    }
+
+    @Test
     public void testMatchesABruteForceSortOnRandomData()
     {
         int k = 7;
