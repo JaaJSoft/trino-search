@@ -14,6 +14,7 @@
 package dev.jaaj.trino.search.vector.knn;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.trino.spi.block.ValueBlock;
 import io.trino.spi.function.AccumulatorStateFactory;
 import io.trino.spi.function.GroupedAccumulatorState;
 import io.trino.spi.function.TypeParameter;
@@ -57,8 +58,8 @@ public final class KnnStateFactory
         @Override
         @SuppressFBWarnings(
                 value = "EI_EXPOSE_REP",
-                justification = "The accumulator input/combine functions mutate the returned heap in place; "
-                        + "that is the whole point of this state, not an accidental leak.")
+                justification = "The combine function hands this heap to the surviving state, which keeps "
+                        + "mutating it; that transfer is the whole point of this state, not an accidental leak.")
         public KnnHeap getHeap()
         {
             return heap;
@@ -68,10 +69,22 @@ public final class KnnStateFactory
         @SuppressFBWarnings(
                 value = "EI_EXPOSE_REP2",
                 justification = "KnnState.setHeap is required to store the caller's live heap: the "
-                        + "aggregation keeps mutating it through further getHeap() calls.")
+                        + "aggregation keeps mutating it through further addToHeap/mergeIntoHeap calls.")
         public void setHeap(KnnHeap heap)
         {
             this.heap = heap;
+        }
+
+        @Override
+        public void addToHeap(ValueBlock keyBlock, int position, double distance)
+        {
+            heap.add(keyBlock, position, distance);
+        }
+
+        @Override
+        public void mergeIntoHeap(KnnHeap other)
+        {
+            heap.mergeFrom(other);
         }
 
         @Override
@@ -114,6 +127,7 @@ public final class KnnStateFactory
         private int[] ks = new int[0];
         private String[] metricNames = new String[0];
         private int groupId;
+        private long heapsSizeInBytes;
 
         @Override
         public void setGroupId(int groupId)
@@ -137,10 +151,45 @@ public final class KnnStateFactory
             return heaps[groupId];
         }
 
+        /**
+         * {@code deserialize} attaches a fresh heap to a group that may already hold one, hence
+         * the subtraction.
+         */
         @Override
         public void setHeap(KnnHeap heap)
         {
+            KnnHeap previous = heaps[groupId];
+            if (previous != null) {
+                heapsSizeInBytes -= previous.estimatedSizeInBytes();
+            }
+            if (heap != null) {
+                heapsSizeInBytes += heap.estimatedSizeInBytes();
+            }
             heaps[groupId] = heap;
+        }
+
+        /**
+         * Every caller attaches a heap while it is still empty and fills it afterwards, so the
+         * running total has to follow each heap's own size and not just which heap sits in which
+         * group. Bracketing the mutation keeps that constant time: only the mutated group is
+         * re-measured, and a heap measures itself without walking its keys.
+         */
+        @Override
+        public void addToHeap(ValueBlock keyBlock, int position, double distance)
+        {
+            KnnHeap heap = heaps[groupId];
+            heapsSizeInBytes -= heap.estimatedSizeInBytes();
+            heap.add(keyBlock, position, distance);
+            heapsSizeInBytes += heap.estimatedSizeInBytes();
+        }
+
+        @Override
+        public void mergeIntoHeap(KnnHeap other)
+        {
+            KnnHeap heap = heaps[groupId];
+            heapsSizeInBytes -= heap.estimatedSizeInBytes();
+            heap.mergeFrom(other);
+            heapsSizeInBytes += heap.estimatedSizeInBytes();
         }
 
         @Override
@@ -167,16 +216,14 @@ public final class KnnStateFactory
             metricNames[groupId] = metricName;
         }
 
+        /**
+         * Called once per input page by {@code HashAggregationOperator.updateMemory}, so it must
+         * stay constant time: walking the groups here makes the whole aggregation quadratic.
+         */
         @Override
         public long getEstimatedSize()
         {
-            long size = INSTANCE_SIZE + sizeOf(heaps) + sizeOf(ks) + sizeOf(metricNames);
-            for (KnnHeap heap : heaps) {
-                if (heap != null) {
-                    size += heap.estimatedSizeInBytes();
-                }
-            }
-            return size;
+            return INSTANCE_SIZE + sizeOf(heaps) + sizeOf(ks) + sizeOf(metricNames) + heapsSizeInBytes;
         }
     }
 }

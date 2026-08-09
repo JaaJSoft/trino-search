@@ -30,22 +30,19 @@ import java.util.List;
 
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.DoubleType.DOUBLE;
-import static io.trino.spi.type.TypeUtils.readNativeValue;
-import static io.trino.spi.type.TypeUtils.writeNativeValue;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static java.util.Objects.requireNonNull;
 
 public final class KnnStateSerializer
         implements AccumulatorStateSerializer<KnnState>
 {
-    private final Type keyType;
     private final RowType neighbourType;
     private final ArrayType neighbourArrayType;
     private final RowType serializedType;
 
     public KnnStateSerializer(@TypeParameter("K") Type keyType)
     {
-        this.keyType = requireNonNull(keyType, "keyType is null");
+        requireNonNull(keyType, "keyType is null");
         this.neighbourType = RowType.anonymous(List.of(keyType, DOUBLE));
         this.neighbourArrayType = new ArrayType(neighbourType);
         this.serializedType = RowType.anonymous(List.of(BIGINT, VARCHAR, neighbourArrayType));
@@ -77,7 +74,7 @@ public final class KnnStateSerializer
             ((ArrayBlockBuilder) fieldBuilders.get(2)).buildEntry(elementBuilder -> {
                 for (KnnHeap.Neighbour neighbour : heap.drainSorted()) {
                     ((RowBlockBuilder) elementBuilder).buildEntry(neighbourFields -> {
-                        writeNativeValue(keyType, neighbourFields.get(0), neighbour.key());
+                        neighbourFields.get(0).append(neighbour.key(), 0);
                         DOUBLE.writeDouble(neighbourFields.get(1), neighbour.distance());
                     });
                 }
@@ -101,16 +98,13 @@ public final class KnnStateSerializer
         // combine(...) once per position. A heap kept from a previous call here would leak
         // that earlier position's neighbours into this one, so every call must start from a
         // brand new heap, never the one already attached to state (if any).
-        KnnHeap heap = new KnnHeap(k, Metric.fromName(metricName).higherIsCloser());
-        state.setHeap(heap);
+        state.setHeap(new KnnHeap(k, Metric.fromName(metricName).higherIsCloser()));
 
         Block neighbours = neighbourArrayType.getObject(row.getRawFieldBlock(2), offset);
         for (int i = 0; i < neighbours.getPositionCount(); i++) {
             SqlRow neighbour = neighbourType.getObject(neighbours, i);
-            int neighbourOffset = neighbour.getRawIndex();
-            Object key = readNativeValue(keyType, neighbour.getRawFieldBlock(0), neighbourOffset);
-            double distance = DOUBLE.getDouble(neighbour.getRawFieldBlock(1), neighbourOffset);
-            heap.add(key, distance);
+            double distance = DOUBLE.getDouble(neighbour.getRawFieldBlock(1), neighbour.getRawIndex());
+            state.addToHeap(neighbour.getUnderlyingFieldBlock(0), neighbour.getUnderlyingFieldPosition(0), distance);
         }
     }
 }

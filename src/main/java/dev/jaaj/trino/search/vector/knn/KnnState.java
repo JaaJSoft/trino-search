@@ -13,6 +13,7 @@
  */
 package dev.jaaj.trino.search.vector.knn;
 
+import io.trino.spi.block.ValueBlock;
 import io.trino.spi.function.AccumulatorState;
 import io.trino.spi.function.AccumulatorStateMetadata;
 
@@ -24,9 +25,20 @@ import io.trino.spi.function.AccumulatorStateMetadata;
 public interface KnnState
         extends AccumulatorState
 {
+    /**
+     * The attached heap, to read from or to hand to another state's {@link #mergeIntoHeap}. Never
+     * to add to: a heap retains the keys it keeps, so its size moves on every candidate, and the
+     * grouped implementation cannot afford to recompute that by walking the groups. Growing a
+     * heap through this reference leaves the size it reports stale, which is the number Trino
+     * kills a query on. Go through {@link #addToHeap} and {@link #mergeIntoHeap} instead.
+     */
     KnnHeap getHeap();
 
     void setHeap(KnnHeap heap);
+
+    void addToHeap(ValueBlock keyBlock, int position, double distance);
+
+    void mergeIntoHeap(KnnHeap other);
 
     int getK();
 

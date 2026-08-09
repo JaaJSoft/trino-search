@@ -190,6 +190,43 @@ public class TestKnnAggregation
                 "SELECT ARRAY[20]");
     }
 
+    /**
+     * {@code array}, {@code row} and {@code map} keys are the shapes whose native value is a
+     * window over the source page rather than a standalone value. They round-trip here; that they
+     * do not drag their page along is pinned in TestKnnHeap.
+     */
+    @Test
+    public void testArrayKeys()
+    {
+        assertQuery(
+                "SELECT transform(knn_agg(ARRAY[id], v, ARRAY[0.0, 0.0], 2, 'euclidean'), x -> x[1][1]) FROM " + POINTS,
+                "SELECT ARRAY['a', 'b']");
+    }
+
+    @Test
+    public void testRowKeys()
+    {
+        assertQuery(
+                """
+                SELECT transform(
+                        knn_agg(CAST(ROW(id) AS row(name varchar)), v, ARRAY[0.0, 0.0], 2, 'euclidean'),
+                        x -> x[1].name)
+                FROM """ + POINTS,
+                "SELECT ARRAY['a', 'b']");
+    }
+
+    @Test
+    public void testMapKeys()
+    {
+        assertQuery(
+                """
+                SELECT transform(
+                        knn_agg(MAP(ARRAY['id'], ARRAY[id]), v, ARRAY[0.0, 0.0], 2, 'euclidean'),
+                        x -> x[1]['id'])
+                FROM """ + POINTS,
+                "SELECT ARRAY['a', 'b']");
+    }
+
     @Test
     public void testRealOverload()
     {
