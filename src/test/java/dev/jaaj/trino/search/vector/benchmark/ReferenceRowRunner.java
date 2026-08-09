@@ -19,6 +19,7 @@ import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.ChainedOptionsBuilder;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
+import org.openjdk.jmh.util.Statistics;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -207,9 +208,21 @@ public final class ReferenceRowRunner
         return new ReferenceRow.Measurement(
                 label,
                 kernel.getScore(),
-                kernel.getScoreError(),
+                standardError(kernel),
                 accumulator.getScore(),
-                accumulator.getScoreError());
+                standardError(accumulator));
+    }
+
+    /**
+     * How precisely the mean of this benchmark is known. Reading JMH's own score error instead
+     * would carry the Student factor of a 99.9 percent interval over five iterations, which
+     * inflates a four percent dispersion into a fourteen percent figure and makes the gate reject
+     * measurements for having few samples rather than for being unstable.
+     */
+    private static double standardError(Result<?> result)
+    {
+        Statistics statistics = result.getStatistics();
+        return ReferenceRow.standardErrorOfMean(statistics.getStandardDeviation(), statistics.getN());
     }
 
     private static Result<?> runOne(Class<?> benchmarkClass, String method, Map<String, String> params)

@@ -76,6 +76,28 @@ public class TestReferenceRow
         }
     }
 
+    /**
+     * The gate asks how precisely a mean is known, which is the dispersion divided by the root of
+     * the sample count, not the dispersion itself. Reading a confidence interval here instead
+     * would fold in a Student factor that grows as samples shrink, and reject a clean measurement
+     * for the crime of having been taken five times.
+     */
+    @Test
+    public void testTheStandardErrorShrinksWithTheSampleCount()
+    {
+        assertThat(ReferenceRow.standardErrorOfMean(10.0, 4)).isCloseTo(5.0, within(1e-12));
+        assertThat(ReferenceRow.standardErrorOfMean(10.0, 100)).isCloseTo(1.0, within(1e-12));
+    }
+
+    @Test
+    public void testASingleSampleHasNoDefinedDispersionAndCountsAsNoisy()
+    {
+        assertThat(ReferenceRow.standardErrorOfMean(0.0, 1)).isNaN();
+        ReferenceRow.Measurement single = new ReferenceRow.Measurement(
+                "x", 100.0, ReferenceRow.standardErrorOfMean(0.0, 1), 200.0, 1.0);
+        assertThat(single.ratioRelativeError()).isEqualTo(Double.POSITIVE_INFINITY);
+    }
+
     @Test
     public void testAQuietRunRecordsNothingAsTooNoisy()
     {

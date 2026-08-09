@@ -38,10 +38,11 @@ never be a hostname, since this file is public. The optional second argument is 
 number, which does not exist yet at measurement time; without it the row carries `#TBD`. The
 command prints the row and does not write this file, so paste the output at the bottom of the
 table yourself. It warns on standard error and exits with a non-zero status when a measurement is
-too noisy to be worth recording; the row is still printed, since the warning can scroll past
-unnoticed, but the failing exit status cannot. It also warns when the working tree has uncommitted
-changes, because a row names a pull request and so cannot otherwise show that it measured code
-that never reached one.
+too imprecise to be worth recording, judged on how precisely each mean is known rather than on
+how widely single iterations happened to scatter; the row is still printed, since the warning can
+scroll past unnoticed, but the failing exit status cannot. It also warns when the working tree has
+uncommitted changes, because a row names a pull request and so cannot otherwise show that it
+measured code that never reached one.
 
 | Date | PR | 128 double | 128 real | 768 double | 768 real | Machine | CPU | Cores | JDK |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
