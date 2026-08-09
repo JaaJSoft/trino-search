@@ -50,6 +50,13 @@ final class VectorMath
      */
     private static final int WIDENING_PARTS = INT_SPECIES.length() / DOUBLE_SPECIES.length();
 
+    /**
+     * How many components are accumulated between two checks against a caller's limit. Small
+     * enough that a hopeless candidate is abandoned early in a long vector, large enough that the
+     * lane reduction each check costs is lost among the multiply-adds it guards.
+     */
+    private static final int CHECK_STRIDE = 64;
+
     private VectorMath() {}
 
     static void checkSameLength(Block first, Block second)
@@ -75,6 +82,21 @@ final class VectorMath
      */
     static double euclideanSquared(Block first, Block second, VectorReader reader)
     {
+        return euclideanSquaredBounded(first, second, reader, Double.POSITIVE_INFINITY);
+    }
+
+    /**
+     * The squared distance, or some value above {@code limit} once the components read so far
+     * already put it there. Every term is a square and so non-negative, which is what makes giving
+     * up sound: a partial sum past the limit can never come back under it, so the components left
+     * unread cannot change the answer to the only question a caller passing a limit is asking.
+     * <p>
+     * An infinite limit is how the unbounded form is expressed, rather than by a second set of
+     * kernels: the comparison it leaves in the loop runs once per {@link #CHECK_STRIDE} components
+     * and is never true.
+     */
+    static double euclideanSquaredBounded(Block first, Block second, VectorReader reader, double limit)
+    {
         // Only a plain LongArrayBlock stores a vector's components contiguously and in order. A
         // dictionary block maps position i somewhere else in a shared array and a run-length block
         // holds a single component, so indexing their backing arrays would compute a distance
@@ -85,7 +107,7 @@ final class VectorMath
                 && second instanceof LongArrayBlock right
                 && !left.mayHaveNull()
                 && !right.mayHaveNull()) {
-            return euclideanSquaredVectorized(left, right);
+            return euclideanSquaredVectorized(left, right, limit);
         }
         // Same reasoning for array(real), whose components are float bits in an int array. The
         // arithmetic still happens in double, so the lanes are widened rather than kept as floats:
@@ -95,9 +117,9 @@ final class VectorMath
                 && second instanceof IntArrayBlock right
                 && !left.mayHaveNull()
                 && !right.mayHaveNull()) {
-            return euclideanSquaredVectorized(left, right);
+            return euclideanSquaredVectorized(left, right, limit);
         }
-        return euclideanSquaredUnrolled(first, second, reader);
+        return euclideanSquaredUnrolled(first, second, reader, limit);
     }
 
     /**
@@ -105,7 +127,7 @@ final class VectorMath
      * costs nothing: the components move from the block's array into a vector register without a
      * copy and without a conversion instruction.
      */
-    private static double euclideanSquaredVectorized(LongArrayBlock first, LongArrayBlock second)
+    private static double euclideanSquaredVectorized(LongArrayBlock first, LongArrayBlock second, double limit)
     {
         long[] leftBits = first.getRawValues();
         long[] rightBits = second.getRawValues();
@@ -114,13 +136,21 @@ final class VectorMath
         int length = first.getPositionCount();
 
         DoubleVector sum = DoubleVector.zero(DoubleVector.SPECIES_PREFERRED);
+        int lanes = LONG_SPECIES.length();
+        int stride = Math.max(lanes, CHECK_STRIDE - (CHECK_STRIDE % lanes));
         int vectorized = LONG_SPECIES.loopBound(length);
         int i = 0;
-        for (; i < vectorized; i += LONG_SPECIES.length()) {
-            DoubleVector left = LongVector.fromArray(LONG_SPECIES, leftBits, leftBase + i).reinterpretAsDoubles();
-            DoubleVector right = LongVector.fromArray(LONG_SPECIES, rightBits, rightBase + i).reinterpretAsDoubles();
-            DoubleVector difference = left.sub(right);
-            sum = difference.fma(difference, sum);
+        while (i < vectorized) {
+            int checkpoint = Math.min(i + stride, vectorized);
+            for (; i < checkpoint; i += lanes) {
+                DoubleVector left = LongVector.fromArray(LONG_SPECIES, leftBits, leftBase + i).reinterpretAsDoubles();
+                DoubleVector right = LongVector.fromArray(LONG_SPECIES, rightBits, rightBase + i).reinterpretAsDoubles();
+                DoubleVector difference = left.sub(right);
+                sum = difference.fma(difference, sum);
+            }
+            if (sum.reduceLanes(VectorOperators.ADD) > limit) {
+                return Double.POSITIVE_INFINITY;
+            }
         }
 
         double total = sum.reduceLanes(VectorOperators.ADD);
@@ -137,7 +167,7 @@ final class VectorMath
      * {@link #WIDENING_PARTS} halves through the same accumulator. Half the memory traffic of the
      * double path for the same amount of arithmetic.
      */
-    private static double euclideanSquaredVectorized(IntArrayBlock first, IntArrayBlock second)
+    private static double euclideanSquaredVectorized(IntArrayBlock first, IntArrayBlock second, double limit)
     {
         int[] leftBits = first.getRawValues();
         int[] rightBits = second.getRawValues();
@@ -146,15 +176,23 @@ final class VectorMath
         int length = first.getPositionCount();
 
         DoubleVector sum = DoubleVector.zero(DOUBLE_SPECIES);
+        int lanes = INT_SPECIES.length();
+        int stride = Math.max(lanes, CHECK_STRIDE - (CHECK_STRIDE % lanes));
         int vectorized = INT_SPECIES.loopBound(length);
         int i = 0;
-        for (; i < vectorized; i += INT_SPECIES.length()) {
-            FloatVector left = IntVector.fromArray(INT_SPECIES, leftBits, leftBase + i).reinterpretAsFloats();
-            FloatVector right = IntVector.fromArray(INT_SPECIES, rightBits, rightBase + i).reinterpretAsFloats();
-            for (int part = 0; part < WIDENING_PARTS; part++) {
-                DoubleVector difference = ((DoubleVector) left.convertShape(VectorOperators.F2D, DOUBLE_SPECIES, part))
-                        .sub((DoubleVector) right.convertShape(VectorOperators.F2D, DOUBLE_SPECIES, part));
-                sum = difference.fma(difference, sum);
+        while (i < vectorized) {
+            int checkpoint = Math.min(i + stride, vectorized);
+            for (; i < checkpoint; i += lanes) {
+                FloatVector left = IntVector.fromArray(INT_SPECIES, leftBits, leftBase + i).reinterpretAsFloats();
+                FloatVector right = IntVector.fromArray(INT_SPECIES, rightBits, rightBase + i).reinterpretAsFloats();
+                for (int part = 0; part < WIDENING_PARTS; part++) {
+                    DoubleVector difference = ((DoubleVector) left.convertShape(VectorOperators.F2D, DOUBLE_SPECIES, part))
+                            .sub((DoubleVector) right.convertShape(VectorOperators.F2D, DOUBLE_SPECIES, part));
+                    sum = difference.fma(difference, sum);
+                }
+            }
+            if (sum.reduceLanes(VectorOperators.ADD) > limit) {
+                return Double.POSITIVE_INFINITY;
             }
         }
 
@@ -169,7 +207,7 @@ final class VectorMath
         return total;
     }
 
-    private static double euclideanSquaredUnrolled(Block first, Block second, VectorReader reader)
+    private static double euclideanSquaredUnrolled(Block first, Block second, VectorReader reader, double limit)
     {
         int length = first.getPositionCount();
         double sum0 = 0.0;
@@ -178,16 +216,23 @@ final class VectorMath
         double sum3 = 0.0;
 
         int unrolled = length - (length % UNROLL);
+        int stride = CHECK_STRIDE - (CHECK_STRIDE % UNROLL);
         int i = 0;
-        for (; i < unrolled; i += UNROLL) {
-            double difference0 = reader.read(first, i) - reader.read(second, i);
-            double difference1 = reader.read(first, i + 1) - reader.read(second, i + 1);
-            double difference2 = reader.read(first, i + 2) - reader.read(second, i + 2);
-            double difference3 = reader.read(first, i + 3) - reader.read(second, i + 3);
-            sum0 += difference0 * difference0;
-            sum1 += difference1 * difference1;
-            sum2 += difference2 * difference2;
-            sum3 += difference3 * difference3;
+        while (i < unrolled) {
+            int checkpoint = Math.min(i + stride, unrolled);
+            for (; i < checkpoint; i += UNROLL) {
+                double difference0 = reader.read(first, i) - reader.read(second, i);
+                double difference1 = reader.read(first, i + 1) - reader.read(second, i + 1);
+                double difference2 = reader.read(first, i + 2) - reader.read(second, i + 2);
+                double difference3 = reader.read(first, i + 3) - reader.read(second, i + 3);
+                sum0 += difference0 * difference0;
+                sum1 += difference1 * difference1;
+                sum2 += difference2 * difference2;
+                sum3 += difference3 * difference3;
+            }
+            if ((sum0 + sum1) + (sum2 + sum3) > limit) {
+                return Double.POSITIVE_INFINITY;
+            }
         }
 
         double sum = (sum0 + sum1) + (sum2 + sum3);
