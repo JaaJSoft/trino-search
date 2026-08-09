@@ -18,8 +18,8 @@ change makes a test fail, the test is the thing to argue with, not to edit.
 Implementation plans, task briefs, progress notes, assistant scratch directories: none of it
 goes in git. It is bookkeeping, it dates the moment the code lands, and it leaks local machine
 paths and tooling names into a public repository. Only source, tests, build files, `README.md`,
-`BENCHMARKS.md` and this file belong here. `BENCHMARKS.md` is a recorded result, not bookkeeping:
-it is what distinguishes it from the plans and progress notes this section forbids.
+`BENCHMARKS.md` and this file belong here. `BENCHMARKS.md` is a recorded result rather than
+bookkeeping, which is why it belongs here and the plans and progress notes do not.
 
 ## Build
 
@@ -94,12 +94,14 @@ Every pull request that touches the vector search code should add one row:
 JAVA_HOME="..." ./mvnw test-compile exec:java \
   -Dexec.classpathScope=test \
   -Dexec.mainClass=dev.jaaj.trino.search.vector.benchmark.ReferenceRowRunner \
-  -Dexec.args="laptop 11"
+  -Dexec.args="laptop-7840hs 11"
 ```
 
-The first argument is a short free-form machine label and the second the pull request number,
-which can be omitted while it is still unknown. The command prints the row; paste it at the bottom
-of the table. It never writes the file, so measuring twice cannot leave a duplicate behind.
+The first argument must name one specific machine and must never be reused for a different one,
+since absolute nanoseconds in `BENCHMARKS.md` are only comparable between rows sharing the same
+label. The second argument is the pull request number, which can be omitted while it is still
+unknown. The command prints the row; paste it at the bottom of the table. It never writes the
+file, so measuring twice cannot leave a duplicate behind.
 
 The label must not be a hostname. `BENCHMARKS.md` is committed to a public repository, and the
 same reasoning keeps the local `JAVA_HOME` path out of every committed file.
