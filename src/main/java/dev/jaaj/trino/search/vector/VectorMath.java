@@ -15,6 +15,11 @@ package dev.jaaj.trino.search.vector;
 
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
+import io.trino.spi.block.LongArrayBlock;
+import jdk.incubator.vector.DoubleVector;
+import jdk.incubator.vector.LongVector;
+import jdk.incubator.vector.VectorOperators;
+import jdk.incubator.vector.VectorSpecies;
 
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 
@@ -25,6 +30,14 @@ final class VectorMath
      * to four cycles on current cores against one cycle of throughput.
      */
     private static final int UNROLL = 4;
+
+    /**
+     * {@code jdk.incubator.vector} is an incubator module, absent unless the JVM was started with
+     * {@code --add-modules}. Nothing here guards against that, because a Trino server cannot start
+     * without it either: {@code io.trino.simd.BlockEncodingSimdSupport} names the same classes in
+     * its own class body, so a JVM able to run the engine is a JVM able to run this.
+     */
+    private static final VectorSpecies<Long> LONG_SPECIES = LongVector.SPECIES_PREFERRED;
 
     private VectorMath() {}
 
@@ -50,6 +63,55 @@ final class VectorMath
      * accuracy: the pairwise shape below is if anything the better-conditioned of the two.
      */
     static double euclideanSquared(Block first, Block second, VectorReader reader)
+    {
+        // Only a plain LongArrayBlock stores a vector's components contiguously and in order. A
+        // dictionary block maps position i somewhere else in a shared array and a run-length block
+        // holds a single component, so indexing their backing arrays would compute a distance
+        // between vectors nobody asked for. Comparing the reader by identity is what ties the
+        // longs below to double bits rather than to some other fixed-width type.
+        if (reader == VectorReader.DOUBLE_READER
+                && first instanceof LongArrayBlock left
+                && second instanceof LongArrayBlock right
+                && !left.mayHaveNull()
+                && !right.mayHaveNull()) {
+            return euclideanSquaredVectorized(left, right);
+        }
+        return euclideanSquaredUnrolled(first, second, reader);
+    }
+
+    /**
+     * The raw longs already hold {@code Double.doubleToLongBits}, so reinterpreting the lanes
+     * costs nothing: the components move from the block's array into a vector register without a
+     * copy and without a conversion instruction.
+     */
+    private static double euclideanSquaredVectorized(LongArrayBlock first, LongArrayBlock second)
+    {
+        long[] leftBits = first.getRawValues();
+        long[] rightBits = second.getRawValues();
+        int leftBase = first.getRawValuesOffset();
+        int rightBase = second.getRawValuesOffset();
+        int length = first.getPositionCount();
+
+        DoubleVector sum = DoubleVector.zero(DoubleVector.SPECIES_PREFERRED);
+        int vectorized = LONG_SPECIES.loopBound(length);
+        int i = 0;
+        for (; i < vectorized; i += LONG_SPECIES.length()) {
+            DoubleVector left = LongVector.fromArray(LONG_SPECIES, leftBits, leftBase + i).reinterpretAsDoubles();
+            DoubleVector right = LongVector.fromArray(LONG_SPECIES, rightBits, rightBase + i).reinterpretAsDoubles();
+            DoubleVector difference = left.sub(right);
+            sum = difference.fma(difference, sum);
+        }
+
+        double total = sum.reduceLanes(VectorOperators.ADD);
+        for (; i < length; i++) {
+            double difference = Double.longBitsToDouble(leftBits[leftBase + i])
+                    - Double.longBitsToDouble(rightBits[rightBase + i]);
+            total += difference * difference;
+        }
+        return total;
+    }
+
+    private static double euclideanSquaredUnrolled(Block first, Block second, VectorReader reader)
     {
         int length = first.getPositionCount();
         double sum0 = 0.0;

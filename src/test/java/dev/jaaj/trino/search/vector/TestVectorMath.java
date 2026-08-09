@@ -234,4 +234,38 @@ public class TestVectorMath
         assertThat(VectorMath.dotProduct(vector, doubles(1.0, 1.0), DOUBLE_READER))
                 .isCloseTo(7.0, within(1e-12));
     }
+
+    /**
+     * The region above is too short to reach a wide loop, which would leave the offset applied
+     * only on the one-component-at-a-time tail. This one is long enough that most of it is read in
+     * whatever the widest step happens to be on the running machine, and every component differs
+     * from its neighbour so that starting even one position early changes the answer.
+     */
+    @Test
+    public void testALongRegionIsReadFromItsOwnOffsetThroughout()
+    {
+        int length = 37;
+        Double[] backing = new Double[length + 5];
+        for (int i = 0; i < backing.length; i++) {
+            backing[i] = (double) i;
+        }
+        Block region = doubles(backing).getRegion(5, length);
+
+        Double[] expected = new Double[length];
+        for (int i = 0; i < length; i++) {
+            expected[i] = (double) (i + 5);
+        }
+
+        assertThat(VectorMath.euclideanSquared(region, doubles(expected), DOUBLE_READER))
+                .isEqualTo(0.0);
+
+        Double[] zeroes = new Double[length];
+        java.util.Arrays.fill(zeroes, 0.0);
+        double sumOfSquares = 0;
+        for (int i = 0; i < length; i++) {
+            sumOfSquares += (double) (i + 5) * (i + 5);
+        }
+        assertThat(VectorMath.euclideanSquared(region, doubles(zeroes), DOUBLE_READER))
+                .isCloseTo(sumOfSquares, within(1e-9));
+    }
 }

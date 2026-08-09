@@ -183,6 +183,20 @@
             <plugin>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <executions>
+                    <!--
+                      VectorMath uses jdk.incubator.vector, which javac does not resolve unless it
+                      is requested. The Trino server always has it, since trino-main's own SIMD
+                      support names the same classes, so the plugin can rely on it at runtime.
+                    -->
+                    <execution>
+                        <id>default-compile</id>
+                        <configuration>
+                            <compilerArgs>
+                                <arg>--add-modules=jdk.incubator.vector</arg>
+                            </compilerArgs>
+                        </configuration>
+                    </execution>
+
                     <execution>
                         <id>default-testCompile</id>
                         <configuration>
