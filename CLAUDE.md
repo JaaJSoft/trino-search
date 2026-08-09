@@ -80,8 +80,10 @@ JAVA_HOME="..." ./mvnw test-compile exec:java \
 ```
 
 The argument is a JMH include regex; omitting it runs everything, which takes well over an hour.
-Numbers from a laptop are only comparable within a single run: turbo and thermal throttling make
-them useless across machines or across hours.
+Two measurements are comparable only when they share the same machine and comparable run
+conditions: turbo state, thermal headroom and cache pressure all move these numbers by tens of
+percent, so a different machine, or the same one under a different load, is a different
+experiment. `BENCHMARKS.md` states the same rule for the rows it holds.
 
 `TestKnnAggRecall` is not a benchmark. It checks that the recall harness scores the exact
 aggregation at 1.0, which is what will make an approximate implementation's recall meaningful.
@@ -94,7 +96,7 @@ Every pull request that touches the vector search code should add one row:
 JAVA_HOME="..." ./mvnw test-compile exec:java \
   -Dexec.classpathScope=test \
   -Dexec.mainClass=dev.jaaj.trino.search.vector.benchmark.ReferenceRowRunner \
-  -Dexec.args="laptop-7840hs 11"
+  -Dexec.args="desktop-5950x 11"
 ```
 
 The first argument must name one specific machine and must never be reused for a different one,

@@ -35,7 +35,8 @@ public class TestReferenceRow
                 new ReferenceRow.Measurement("128 real", 103.0, 1.0, 187.8, 2.0),
                 new ReferenceRow.Measurement("768 double", 523.3, 5.0, 859.3, 8.0),
                 new ReferenceRow.Measurement("768 real", 564.2, 5.0, 829.3, 8.0),
-                "laptop",
+                "desktop-5950x",
+                "AMD Ryzen 9 5950X 16-Core Processor",
                 32,
                 "25.0.1");
     }
@@ -55,7 +56,7 @@ public class TestReferenceRow
                         + "| 103.0 / 187.8 / 1.82 "
                         + "| 523.3 / 859.3 / 1.64 "
                         + "| 564.2 / 829.3 / 1.47 "
-                        + "| laptop | 32 | 25.0.1 |");
+                        + "| desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |");
     }
 
     /**
@@ -98,7 +99,8 @@ public class TestReferenceRow
                 new ReferenceRow.Measurement("128 real", 103.0, 1.0, 187.8, 60.0),
                 new ReferenceRow.Measurement("768 double", 523.3, 5.0, 859.3, 8.0),
                 new ReferenceRow.Measurement("768 real", 564.2, 5.0, 829.3, 8.0),
-                "laptop",
+                "desktop-5950x",
+                "AMD Ryzen 9 5950X 16-Core Processor",
                 32,
                 "25.0.1");
         assertThat(noisy.tooNoisyToRecord()).containsExactly("128 double", "128 real");
@@ -122,7 +124,8 @@ public class TestReferenceRow
                 new ReferenceRow.Measurement("128 real", 103.0, 1.0, 187.8, 2.0),
                 new ReferenceRow.Measurement("768 double", 523.3, 5.0, 859.3, 8.0),
                 new ReferenceRow.Measurement("768 real", 564.2, 5.0, 829.3, 8.0),
-                "laptop",
+                "desktop-5950x",
+                "AMD Ryzen 9 5950X 16-Core Processor",
                 32,
                 "25.0.1");
         assertThat(quietHalves.tooNoisyToRecord()).containsExactly("128 double");

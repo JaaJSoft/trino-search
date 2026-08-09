@@ -24,11 +24,15 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 /**
  * Measures the four reference points and prints the {@code BENCHMARKS.md} row for them.
@@ -47,6 +51,8 @@ public final class ReferenceRowRunner
     private static final String K = "10";
     private static final int SMALL_DIMENSION = 128;
     private static final int LARGE_DIMENSION = 768;
+    private static final Pattern PULL_REQUEST_NUMBER = Pattern.compile("#?\\d+");
+    private static final String UNKNOWN_CPU = "unknown";
 
     private ReferenceRowRunner() {}
 
@@ -55,7 +61,7 @@ public final class ReferenceRowRunner
     {
         if (args.length == 0) {
             System.err.println("usage: ReferenceRowRunner <machine-label> [pull-request-number]");
-            System.err.println("  the machine label must name one specific machine, e.g. 'laptop-7840hs', and must");
+            System.err.println("  the machine label must name one specific machine, e.g. 'desktop-5950x', and must");
             System.err.println("  never be reused for a different machine; it must not be a hostname, because");
             System.err.println("  BENCHMARKS.md is committed to a public repository");
             System.exit(2);
@@ -73,6 +79,7 @@ public final class ReferenceRowRunner
                 measure("768 double", LARGE_DIMENSION, "doubleVectors", "doubleRows"),
                 measure("768 real", LARGE_DIMENSION, "realVectors", "realRows"),
                 machineLabel(args),
+                currentCpu(),
                 Runtime.getRuntime().availableProcessors(),
                 System.getProperty("java.version"));
 
@@ -98,13 +105,85 @@ public final class ReferenceRowRunner
     }
 
     /**
+     * The processor model, which is what actually decides whether two rows can be compared: cache
+     * size and memory bandwidth are exactly what the ratio does not cancel. There is no portable
+     * way to ask the JVM for it, so this reads the two places that do know and degrades to
+     * {@value #UNKNOWN_CPU} rather than failing, since a row without it is still worth recording.
+     */
+    static String currentCpu()
+    {
+        String fromLinux = cpuFromProcInfo();
+        if (fromLinux != null) {
+            return fromLinux;
+        }
+        String fromWindows = cpuFromWindowsRegistry();
+        return fromWindows != null ? fromWindows : UNKNOWN_CPU;
+    }
+
+    private static String cpuFromProcInfo()
+    {
+        Path cpuInfo = Path.of("/proc/cpuinfo");
+        if (!Files.isReadable(cpuInfo)) {
+            return null;
+        }
+        try {
+            for (String line : Files.readAllLines(cpuInfo, StandardCharsets.UTF_8)) {
+                if (line.startsWith("model name")) {
+                    return normaliseCpu(line.substring(line.indexOf(':') + 1));
+                }
+            }
+        }
+        catch (IOException e) {
+            return null;
+        }
+        return null;
+    }
+
+    private static String cpuFromWindowsRegistry()
+    {
+        if (!System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows")) {
+            return null;
+        }
+        try {
+            String output = runCommand(
+                    "reg",
+                    "query",
+                    "HKLM\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0",
+                    "/v",
+                    "ProcessorNameString");
+            int marker = output.indexOf("REG_SZ");
+            return marker < 0 ? null : normaliseCpu(output.substring(marker + "REG_SZ".length()));
+        }
+        catch (IllegalStateException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Both sources pad the model with runs of spaces, which a markdown cell would keep.
+     */
+    private static String normaliseCpu(String raw)
+    {
+        String collapsed = raw.trim().replaceAll("\\s+", " ");
+        return collapsed.isEmpty() ? null : collapsed;
+    }
+
+    /**
      * Accepts "11" and "#11" alike, because both are natural to type and the column is only
-     * sortable and greppable if they land in the file identically.
+     * sortable and greppable if they land in the file identically. Anything else is refused here,
+     * at the command line where it can still be retyped: stripping every hash and prefixing one
+     * would turn "1#1" into "#11" and "draft" into "#draft", which look like real identifiers once
+     * pasted into a row nobody revisits.
      */
     static String pullRequestLabel(String[] args)
     {
         if (args.length < 2) {
             return "#TBD";
+        }
+        if (!PULL_REQUEST_NUMBER.matcher(args[1]).matches()) {
+            throw new IllegalArgumentException(
+                    "the pull request must be a number, optionally prefixed with a hash; got '%s'"
+                            .formatted(args[1]));
         }
         return "#" + args[1].replace("#", "");
     }
@@ -168,6 +247,12 @@ public final class ReferenceRowRunner
         String[] command = new String[args.length + 1];
         command[0] = "git";
         System.arraycopy(args, 0, command, 1, args.length);
+        return runCommand(command);
+    }
+
+    private static String runCommand(String... command)
+    {
+        String description = String.join(" ", command);
         try {
             Process process = new ProcessBuilder(command)
                     .redirectErrorStream(true)
@@ -185,16 +270,16 @@ public final class ReferenceRowRunner
                 }
             }
             if (process.waitFor() != 0) {
-                throw new IllegalStateException("git " + String.join(" ", args) + " failed: " + output);
+                throw new IllegalStateException(description + " failed: " + output);
             }
             return output.toString().trim();
         }
         catch (IOException e) {
-            throw new IllegalStateException("could not run git " + String.join(" ", args), e);
+            throw new IllegalStateException("could not run " + description, e);
         }
         catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("interrupted while running git " + String.join(" ", args), e);
+            throw new IllegalStateException("interrupted while running " + description, e);
         }
     }
 }

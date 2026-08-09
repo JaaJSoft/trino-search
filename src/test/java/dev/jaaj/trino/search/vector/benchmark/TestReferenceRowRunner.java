@@ -16,6 +16,7 @@ package dev.jaaj.trino.search.vector.benchmark;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 public class TestReferenceRowRunner
 {
@@ -45,5 +46,38 @@ public class TestReferenceRowRunner
     {
         assertThat(ReferenceRowRunner.pullRequestLabel(new String[] {"laptop", "11"})).isEqualTo("#11");
         assertThat(ReferenceRowRunner.pullRequestLabel(new String[] {"laptop", "#11"})).isEqualTo("#11");
+    }
+
+    /**
+     * Stripping every hash and prefixing one turned "1#1" into "#11" and "draft" into "#draft",
+     * both of which look like a legitimate identifier once pasted. A row is only worth keeping if
+     * its pull request column points at a real pull request, so anything that is not a number
+     * fails at the command line where it can still be retyped.
+     */
+    /**
+     * The detected model goes straight into a markdown cell, so what matters is not which string
+     * comes back but that it cannot break the row: both sources pad the name with runs of spaces,
+     * and a pipe would end the cell early and shift every column after it.
+     */
+    @Test
+    public void testTheDetectedCpuIsFitForAMarkdownCell()
+    {
+        String cpu = ReferenceRowRunner.currentCpu();
+        assertThat(cpu)
+                .isNotBlank()
+                .isEqualTo(cpu.strip())
+                .doesNotContain("  ")
+                .doesNotContain("|")
+                .doesNotContain("\n");
+    }
+
+    @Test
+    public void testAPullRequestThatIsNotANumberIsRejected()
+    {
+        for (String rejected : new String[] {"1#1", "draft", "", "#", "11a", "-11", "#1#1"}) {
+            assertThatThrownBy(() -> ReferenceRowRunner.pullRequestLabel(new String[] {"laptop", rejected}))
+                    .as(rejected)
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
     }
 }

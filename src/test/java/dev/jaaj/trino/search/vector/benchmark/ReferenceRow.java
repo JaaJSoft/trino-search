@@ -41,6 +41,7 @@ public record ReferenceRow(
         Measurement largeDouble,
         Measurement largeReal,
         String machine,
+        String cpu,
         int cores,
         String jdk)
 {
@@ -87,7 +88,7 @@ public record ReferenceRow(
     {
         return String.format(
                 Locale.ROOT,
-                "| %s | %s | %s | %s | %s | %s | %s | %s | %d | %s |",
+                "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %d | %s |",
                 date,
                 pullRequest,
                 commit,
@@ -96,6 +97,7 @@ public record ReferenceRow(
                 cell(largeDouble),
                 cell(largeReal),
                 machine,
+                cpu,
                 cores,
                 jdk);
     }

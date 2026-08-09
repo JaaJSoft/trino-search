@@ -28,7 +28,7 @@ To record a row, from a build with Java 25:
 ./mvnw test-compile exec:java \
   -Dexec.classpathScope=test \
   -Dexec.mainClass=dev.jaaj.trino.search.vector.benchmark.ReferenceRowRunner \
-  -Dexec.args="laptop-7840hs"
+  -Dexec.args="desktop-5950x"
 ```
 
 The argument must name one specific machine and must never be reused for a different one:
@@ -41,6 +41,6 @@ table yourself. It warns on standard error and exits with a non-zero status when
 too noisy to be worth recording; the row is still printed, since the warning can scroll past
 unnoticed, but the failing exit status cannot.
 
-| Date | PR | Commit | 128 double | 128 real | 768 double | 768 real | Machine | Cores | JDK |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 2026-08-09 | #11 | 0f73caf | 78.0 / 162.2 / 2.08 | 86.1 / 161.5 / 1.88 | 492.9 / 685.1 / 1.39 | 506.0 / 629.2 / 1.24 | laptop | 32 | 25.0.1 |
+| Date | PR | Commit | 128 double | 128 real | 768 double | 768 real | Machine | CPU | Cores | JDK |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-08-09 | #11 | 0f73caf | 78.0 / 162.2 / 2.08 | 86.1 / 161.5 / 1.88 | 492.9 / 685.1 / 1.39 | 506.0 / 629.2 / 1.24 | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
