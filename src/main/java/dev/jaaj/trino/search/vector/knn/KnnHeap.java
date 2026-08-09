@@ -65,7 +65,22 @@ public final class KnnHeap
 
     public void add(ValueBlock keyBlock, int position, double distance)
     {
+        // Copying the key is the expensive half of an insertion, and once k neighbours are in,
+        // nearly every candidate is dropped. Ranking first leaves those candidates costing a
+        // comparison instead of a copy the heap throws away.
+        if (!wouldAccept(distance)) {
+            return;
+        }
         addOwnedKey(keyBlock.getSingleValueBlock(position), distance);
+    }
+
+    /**
+     * Whether {@link #add} would retain a candidate at this distance, which is the rule
+     * {@link #addOwnedKey} applies once the key has been copied.
+     */
+    boolean wouldAccept(double distance)
+    {
+        return size < k || isCloser(distance, distances[0]);
     }
 
     /**

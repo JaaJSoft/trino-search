@@ -132,7 +132,7 @@ PR descriptions must follow the structure of `.github/PULL_REQUEST_TEMPLATE.md` 
 
 Commit messages and PR bodies are written in the project's voice: plain declarative English,
 explaining intent rather than narrating the authoring process. Tooling trailers such as
-`Co-Authored-By` are forbiden; and prose that reads as a machine describing its own work is not.
+`Co-Authored-By` are forbidden, as is prose that reads as a machine describing its own work.
 
 ## Backward Compatibility
 

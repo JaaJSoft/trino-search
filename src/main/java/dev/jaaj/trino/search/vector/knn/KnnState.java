@@ -13,6 +13,7 @@
  */
 package dev.jaaj.trino.search.vector.knn;
 
+import dev.jaaj.trino.search.vector.Metric;
 import io.trino.spi.block.ValueBlock;
 import io.trino.spi.function.AccumulatorState;
 import io.trino.spi.function.AccumulatorStateMetadata;
@@ -44,7 +45,7 @@ public interface KnnState
 
     void setK(int k);
 
-    String getMetricName();
+    Metric getMetric();
 
-    void setMetricName(String metricName);
+    void setMetric(Metric metric);
 }
