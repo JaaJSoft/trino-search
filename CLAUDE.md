@@ -17,8 +17,9 @@ change makes a test fail, the test is the thing to argue with, not to edit.
 
 Implementation plans, task briefs, progress notes, assistant scratch directories: none of it
 goes in git. It is bookkeeping, it dates the moment the code lands, and it leaks local machine
-paths and tooling names into a public repository. Only source, tests, build files, `README.md`
-and this file belong here.
+paths and tooling names into a public repository. Only source, tests, build files, `README.md`,
+`BENCHMARKS.md` and this file belong here. `BENCHMARKS.md` is a recorded result, not bookkeeping:
+it is what distinguishes it from the plans and progress notes this section forbids.
 
 ## Build
 
@@ -84,6 +85,24 @@ them useless across machines or across hours.
 
 `TestKnnAggRecall` is not a benchmark. It checks that the recall harness scores the exact
 aggregation at 1.0, which is what will make an approximate implementation's recall meaningful.
+
+### Recording a row in BENCHMARKS.md
+
+Every pull request that touches the vector search code should add one row:
+
+```bash
+JAVA_HOME="..." ./mvnw test-compile exec:java \
+  -Dexec.classpathScope=test \
+  -Dexec.mainClass=dev.jaaj.trino.search.vector.benchmark.ReferenceRowRunner \
+  -Dexec.args="laptop 11"
+```
+
+The first argument is a short free-form machine label and the second the pull request number,
+which can be omitted while it is still unknown. The command prints the row; paste it at the bottom
+of the table. It never writes the file, so measuring twice cannot leave a duplicate behind.
+
+The label must not be a hostname. `BENCHMARKS.md` is committed to a public repository, and the
+same reasoning keeps the local `JAVA_HOME` path out of every committed file.
 
 ## Git
 
