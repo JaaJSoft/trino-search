@@ -15,8 +15,11 @@ package dev.jaaj.trino.search.vector;
 
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
+import io.trino.spi.block.IntArrayBlock;
 import io.trino.spi.block.LongArrayBlock;
 import jdk.incubator.vector.DoubleVector;
+import jdk.incubator.vector.FloatVector;
+import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.LongVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
@@ -38,6 +41,14 @@ final class VectorMath
      * its own class body, so a JVM able to run the engine is a JVM able to run this.
      */
     private static final VectorSpecies<Long> LONG_SPECIES = LongVector.SPECIES_PREFERRED;
+    private static final VectorSpecies<Double> DOUBLE_SPECIES = DoubleVector.SPECIES_PREFERRED;
+    private static final VectorSpecies<Integer> INT_SPECIES = IntVector.SPECIES_PREFERRED;
+
+    /**
+     * How many double vectors one int vector's worth of components widens into. Both species are
+     * the preferred ones, so they share a shape and this is the ratio of their element sizes.
+     */
+    private static final int WIDENING_PARTS = INT_SPECIES.length() / DOUBLE_SPECIES.length();
 
     private VectorMath() {}
 
@@ -76,6 +87,16 @@ final class VectorMath
                 && !right.mayHaveNull()) {
             return euclideanSquaredVectorized(left, right);
         }
+        // Same reasoning for array(real), whose components are float bits in an int array. The
+        // arithmetic still happens in double, so the lanes are widened rather than kept as floats:
+        // accumulating in float would answer a different question than every other path here.
+        if (reader == VectorReader.REAL_READER
+                && first instanceof IntArrayBlock left
+                && second instanceof IntArrayBlock right
+                && !left.mayHaveNull()
+                && !right.mayHaveNull()) {
+            return euclideanSquaredVectorized(left, right);
+        }
         return euclideanSquaredUnrolled(first, second, reader);
     }
 
@@ -106,6 +127,43 @@ final class VectorMath
         for (; i < length; i++) {
             double difference = Double.longBitsToDouble(leftBits[leftBase + i])
                     - Double.longBitsToDouble(rightBits[rightBase + i]);
+            total += difference * difference;
+        }
+        return total;
+    }
+
+    /**
+     * One int vector holds twice the components a double vector does, so each load feeds
+     * {@link #WIDENING_PARTS} halves through the same accumulator. Half the memory traffic of the
+     * double path for the same amount of arithmetic.
+     */
+    private static double euclideanSquaredVectorized(IntArrayBlock first, IntArrayBlock second)
+    {
+        int[] leftBits = first.getRawValues();
+        int[] rightBits = second.getRawValues();
+        int leftBase = first.getRawValuesOffset();
+        int rightBase = second.getRawValuesOffset();
+        int length = first.getPositionCount();
+
+        DoubleVector sum = DoubleVector.zero(DOUBLE_SPECIES);
+        int vectorized = INT_SPECIES.loopBound(length);
+        int i = 0;
+        for (; i < vectorized; i += INT_SPECIES.length()) {
+            FloatVector left = IntVector.fromArray(INT_SPECIES, leftBits, leftBase + i).reinterpretAsFloats();
+            FloatVector right = IntVector.fromArray(INT_SPECIES, rightBits, rightBase + i).reinterpretAsFloats();
+            for (int part = 0; part < WIDENING_PARTS; part++) {
+                DoubleVector difference = ((DoubleVector) left.convertShape(VectorOperators.F2D, DOUBLE_SPECIES, part))
+                        .sub((DoubleVector) right.convertShape(VectorOperators.F2D, DOUBLE_SPECIES, part));
+                sum = difference.fma(difference, sum);
+            }
+        }
+
+        double total = sum.reduceLanes(VectorOperators.ADD);
+        for (; i < length; i++) {
+            // Both casts are load-bearing: without them this subtracts in float, which is neither
+            // what the lanes above do nor what VectorReader.read gives every other path.
+            double difference = (double) Float.intBitsToFloat(leftBits[leftBase + i])
+                    - (double) Float.intBitsToFloat(rightBits[rightBase + i]);
             total += difference * difference;
         }
         return total;

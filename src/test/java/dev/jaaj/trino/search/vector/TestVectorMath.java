@@ -21,7 +21,9 @@ import io.trino.spi.block.RunLengthEncodedBlock;
 import org.junit.jupiter.api.Test;
 
 import static dev.jaaj.trino.search.vector.VectorReader.DOUBLE_READER;
+import static dev.jaaj.trino.search.vector.VectorReader.REAL_READER;
 import static io.trino.spi.type.DoubleType.DOUBLE;
+import static io.trino.spi.type.RealType.REAL;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
@@ -40,6 +42,89 @@ public class TestVectorMath
             }
         }
         return builder.build();
+    }
+
+    private static Block reals(Float... values)
+    {
+        BlockBuilder builder = REAL.createBlockBuilder(null, values.length);
+        for (Float value : values) {
+            if (value == null) {
+                builder.appendNull();
+            }
+            else {
+                REAL.writeFloat(builder, value);
+            }
+        }
+        return builder.build();
+    }
+
+    /**
+     * Components are read as floats and the arithmetic happens in double, so a fast path that
+     * accumulated in float instead would still look right on values that are exact in float32.
+     * 0.1 and 0.3 are not, and their widened difference is not the float difference, so this pins
+     * where the widening happens.
+     */
+    @Test
+    public void testRealVectorsWidenBeforeTheArithmetic()
+    {
+        double left = 0.1f;
+        double right = 0.3f;
+        double expected = (left - right) * (left - right);
+
+        assertThat(VectorMath.euclideanSquared(reals(0.1f), reals(0.3f), REAL_READER))
+                .isEqualTo(expected);
+    }
+
+    @Test
+    public void testADictionaryEncodedRealVectorIsReadThroughItsPositions()
+    {
+        Block dictionary = reals(1.0f, 2.0f, 3.0f, 4.0f);
+        Block vector = DictionaryBlock.create(2, dictionary, new int[] {3, 2});
+
+        assertThat(VectorMath.euclideanSquared(vector, reals(0.0f, 0.0f), REAL_READER))
+                .isCloseTo(25.0, within(1e-9));
+    }
+
+    @Test
+    public void testARunLengthEncodedRealVectorIsReadThroughItsPositions()
+    {
+        Block vector = RunLengthEncodedBlock.create(reals(2.0f), 3);
+
+        assertThat(VectorMath.euclideanSquared(vector, reals(0.0f, 0.0f, 0.0f), REAL_READER))
+                .isCloseTo(12.0, within(1e-9));
+    }
+
+    /**
+     * A length that is not a whole number of vector lanes, read from a block whose components do
+     * not start at the beginning of its backing array: the two mistakes a raw-array fast path makes
+     * are dropping the tail and ignoring the offset, and this fails on either.
+     */
+    @Test
+    public void testALongRealRegionIsReadFromItsOwnOffsetThroughout()
+    {
+        int length = 37;
+        Float[] backing = new Float[length + 5];
+        for (int i = 0; i < backing.length; i++) {
+            backing[i] = (float) i;
+        }
+        Block region = reals(backing).getRegion(5, length);
+
+        Float[] expected = new Float[length];
+        for (int i = 0; i < length; i++) {
+            expected[i] = (float) (i + 5);
+        }
+
+        assertThat(VectorMath.euclideanSquared(region, reals(expected), REAL_READER))
+                .isEqualTo(0.0);
+
+        Float[] zeroes = new Float[length];
+        java.util.Arrays.fill(zeroes, 0.0f);
+        double sumOfSquares = 0;
+        for (int i = 0; i < length; i++) {
+            sumOfSquares += (double) (i + 5) * (i + 5);
+        }
+        assertThat(VectorMath.euclideanSquared(region, reals(zeroes), REAL_READER))
+                .isCloseTo(sumOfSquares, within(1e-9));
     }
 
     @Test
