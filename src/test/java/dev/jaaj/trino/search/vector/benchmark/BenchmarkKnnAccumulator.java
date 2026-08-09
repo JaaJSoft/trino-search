@@ -99,7 +99,7 @@ public class BenchmarkKnnAccumulator
     {
         KnnState state = new KnnStateFactory(BIGINT).createSingleState();
         for (int i = 0; i < ROWS; i++) {
-            KnnAggregation.OfDoubleVectors.input(BIGINT, state, keys, i, doubleVectors[i], doubleQuery, k, metricSlice);
+            KnnAggregation.OfDoubleVectors.input(state, keys, i, doubleVectors[i], doubleQuery, k, metricSlice);
         }
         return state.getHeap().size();
     }
@@ -110,7 +110,7 @@ public class BenchmarkKnnAccumulator
     {
         KnnState state = new KnnStateFactory(BIGINT).createSingleState();
         for (int i = 0; i < ROWS; i++) {
-            KnnAggregation.OfRealVectors.input(BIGINT, state, keys, i, realVectors[i], realQuery, k, metricSlice);
+            KnnAggregation.OfRealVectors.input(state, keys, i, realVectors[i], realQuery, k, metricSlice);
         }
         return state.getHeap().size();
     }

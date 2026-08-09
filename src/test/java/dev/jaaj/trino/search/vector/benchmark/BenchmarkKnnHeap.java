@@ -14,6 +14,7 @@
 package dev.jaaj.trino.search.vector.benchmark;
 
 import dev.jaaj.trino.search.vector.knn.KnnHeap;
+import io.trino.spi.block.LongArrayBlock;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -74,7 +75,7 @@ public class BenchmarkKnnHeap
     public String arrivalOrder;
 
     private double[] distances;
-    private Object[] keys;
+    private LongArrayBlock keys;
     private KnnHeap other;
 
     @Setup(Level.Trial)
@@ -82,10 +83,9 @@ public class BenchmarkKnnHeap
     {
         SplittableRandom random = new SplittableRandom(5L);
         distances = new double[BATCH];
-        keys = new Object[BATCH];
+        keys = VectorBlocks.sequentialKeys(BATCH);
         for (int i = 0; i < BATCH; i++) {
             distances[i] = random.nextDouble();
-            keys[i] = (long) i;
         }
 
         switch (ArrivalOrder.valueOf(arrivalOrder)) {
@@ -119,7 +119,7 @@ public class BenchmarkKnnHeap
     {
         KnnHeap heap = new KnnHeap(k, false);
         for (int i = 0; i < BATCH; i++) {
-            heap.add(keys[i], distances[i]);
+            heap.add(keys, i, distances[i]);
         }
         return heap.size();
     }
@@ -150,7 +150,7 @@ public class BenchmarkKnnHeap
     {
         KnnHeap heap = new KnnHeap(k, false);
         for (int i = offset; i < offset + k; i++) {
-            heap.add(keys[i], distances[i]);
+            heap.add(keys, i, distances[i]);
         }
         return heap;
     }

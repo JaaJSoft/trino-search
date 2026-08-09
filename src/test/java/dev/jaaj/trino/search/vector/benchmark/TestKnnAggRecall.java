@@ -183,11 +183,11 @@ public class TestKnnAggRecall
         for (int i = fromInclusive; i < toExclusive; i++) {
             if (realVectors) {
                 KnnAggregation.OfRealVectors.input(
-                        BIGINT, state, keys, i, baseBlocks[i], queryBlock, K, Slices.utf8Slice(distance.sqlName()));
+                        state, keys, i, baseBlocks[i], queryBlock, K, Slices.utf8Slice(distance.sqlName()));
             }
             else {
                 KnnAggregation.OfDoubleVectors.input(
-                        BIGINT, state, keys, i, baseBlocks[i], queryBlock, K, Slices.utf8Slice(distance.sqlName()));
+                        state, keys, i, baseBlocks[i], queryBlock, K, Slices.utf8Slice(distance.sqlName()));
             }
         }
     }
