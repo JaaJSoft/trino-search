@@ -20,6 +20,12 @@ import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 
 final class VectorMath
 {
+    /**
+     * Enough independent accumulators to cover the latency of a floating point add, which is three
+     * to four cycles on current cores against one cycle of throughput.
+     */
+    private static final int UNROLL = 4;
+
     private VectorMath() {}
 
     static void checkSameLength(Block first, Block second)
@@ -34,10 +40,38 @@ final class VectorMath
         return first.hasNull() || second.hasNull();
     }
 
+    /**
+     * Four partial sums rather than one. A single accumulator makes every iteration wait for the
+     * previous addition to retire, which pins the loop to the latency of one floating point add
+     * however much of the processor sits idle; independent sums let those additions overlap.
+     * <p>
+     * The trade is that the components are added in a different order, so a result can differ from
+     * the textbook left-to-right sum in its last bits. That is a change of rounding, not of
+     * accuracy: the pairwise shape below is if anything the better-conditioned of the two.
+     */
     static double euclideanSquared(Block first, Block second, VectorReader reader)
     {
-        double sum = 0.0;
-        for (int i = 0; i < first.getPositionCount(); i++) {
+        int length = first.getPositionCount();
+        double sum0 = 0.0;
+        double sum1 = 0.0;
+        double sum2 = 0.0;
+        double sum3 = 0.0;
+
+        int unrolled = length - (length % UNROLL);
+        int i = 0;
+        for (; i < unrolled; i += UNROLL) {
+            double difference0 = reader.read(first, i) - reader.read(second, i);
+            double difference1 = reader.read(first, i + 1) - reader.read(second, i + 1);
+            double difference2 = reader.read(first, i + 2) - reader.read(second, i + 2);
+            double difference3 = reader.read(first, i + 3) - reader.read(second, i + 3);
+            sum0 += difference0 * difference0;
+            sum1 += difference1 * difference1;
+            sum2 += difference2 * difference2;
+            sum3 += difference3 * difference3;
+        }
+
+        double sum = (sum0 + sum1) + (sum2 + sum3);
+        for (; i < length; i++) {
             double difference = reader.read(first, i) - reader.read(second, i);
             sum += difference * difference;
         }
