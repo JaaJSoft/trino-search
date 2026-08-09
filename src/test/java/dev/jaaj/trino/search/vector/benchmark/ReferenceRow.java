@@ -53,8 +53,26 @@ public record ReferenceRow(
     public static final double RATIO_NOISE_THRESHOLD = 0.15;
 
     /**
-     * @param kernelError half-width of the JMH confidence interval on {@code kernelNanos}, in the
-     *         same unit as the score
+     * The standard error of a mean over {@code samples} iterations, which is how precisely that
+     * mean is known.
+     * <p>
+     * This is deliberately not JMH's {@code getScoreError}. That is the half-width of a 99.9
+     * percent confidence interval, so on the five iterations these benchmarks run it multiplies
+     * the standard error by a Student factor of about 8.6. Iterations dispersed by a perfectly
+     * ordinary four percent then report a fourteen percent error, and a gate reading that number
+     * rejects clean measurements for having few samples rather than for being unstable.
+     *
+     * @return {@code NaN} below two samples, where dispersion is not defined and the run must be
+     *         treated as unusable rather than as quiet
+     */
+    static double standardErrorOfMean(double standardDeviation, long samples)
+    {
+        return samples < 2 ? Double.NaN : standardDeviation / Math.sqrt(samples);
+    }
+
+    /**
+     * @param kernelError the standard error of {@code kernelNanos}, from
+     *         {@link #standardErrorOfMean}, in the same unit as the score
      */
     public record Measurement(String label, double kernelNanos, double kernelError, double rowNanos, double rowError)
     {
@@ -70,10 +88,10 @@ public record ReferenceRow(
          * can combine into a ratio error above it, which is exactly why the gate is computed here
          * rather than by comparing each half to the band separately.
          * <p>
-         * JMH reports {@code NaN} for a score error when a run has too few data points to build a
-         * confidence interval; propagating that through unchanged would make {@code NaN >
-         * threshold} silently false and let the noisiest possible run pass, so a non-finite result
-         * is reported as infinitely noisy instead.
+         * A run with too few iterations has no defined dispersion; propagating the resulting
+         * {@code NaN} through unchanged would make {@code NaN > threshold} silently false and let
+         * the noisiest possible run pass, so a non-finite result is reported as infinitely noisy
+         * instead.
          */
         public double ratioRelativeError()
         {
