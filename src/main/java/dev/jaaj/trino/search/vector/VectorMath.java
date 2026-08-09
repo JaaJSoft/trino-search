@@ -59,6 +59,21 @@ final class VectorMath
 
     private VectorMath() {}
 
+    /**
+     * How many components to accumulate between checks. A caller with no limit still goes through
+     * the same loop, so it is given a stride covering the whole vector: it then pays one comparison
+     * for the vector instead of one per {@link #CHECK_STRIDE} components. Measured at dimension
+     * 768, checking throughout cost the unbounded kernels about fifteen percent, which is more than
+     * a branch nobody needs is worth.
+     */
+    private static int checkStride(int step, int end, double limit)
+    {
+        if (limit == Double.POSITIVE_INFINITY) {
+            return Math.max(step, end);
+        }
+        return Math.max(step, CHECK_STRIDE - (CHECK_STRIDE % step));
+    }
+
     static void checkSameLength(Block first, Block second)
     {
         if (first.getPositionCount() != second.getPositionCount()) {
@@ -137,8 +152,8 @@ final class VectorMath
 
         DoubleVector sum = DoubleVector.zero(DoubleVector.SPECIES_PREFERRED);
         int lanes = LONG_SPECIES.length();
-        int stride = Math.max(lanes, CHECK_STRIDE - (CHECK_STRIDE % lanes));
         int vectorized = LONG_SPECIES.loopBound(length);
+        int stride = checkStride(lanes, vectorized, limit);
         int i = 0;
         while (i < vectorized) {
             int checkpoint = Math.min(i + stride, vectorized);
@@ -177,8 +192,8 @@ final class VectorMath
 
         DoubleVector sum = DoubleVector.zero(DOUBLE_SPECIES);
         int lanes = INT_SPECIES.length();
-        int stride = Math.max(lanes, CHECK_STRIDE - (CHECK_STRIDE % lanes));
         int vectorized = INT_SPECIES.loopBound(length);
+        int stride = checkStride(lanes, vectorized, limit);
         int i = 0;
         while (i < vectorized) {
             int checkpoint = Math.min(i + stride, vectorized);
@@ -216,7 +231,7 @@ final class VectorMath
         double sum3 = 0.0;
 
         int unrolled = length - (length % UNROLL);
-        int stride = CHECK_STRIDE - (CHECK_STRIDE % UNROLL);
+        int stride = checkStride(UNROLL, unrolled, limit);
         int i = 0;
         while (i < unrolled) {
             int checkpoint = Math.min(i + stride, unrolled);
