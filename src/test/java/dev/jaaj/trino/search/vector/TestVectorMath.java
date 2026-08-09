@@ -234,6 +234,113 @@ public class TestVectorMath
                 .isCloseTo(11.0, within(1e-12));
     }
 
+    /**
+     * The counterpart of {@link #testTheVectorisedRealBodyWidensBeforeSubtracting} for the dot
+     * product: components are read as floats and multiplied in double, so a body that multiplied
+     * the float lanes and widened the product afterwards would answer a different question.
+     * <p>
+     * Whole numbers would hide it, since their products are exact in float. A tenth and three
+     * tenths are not, and neither is their product, so every term here separates the two orders.
+     */
+    @Test
+    public void testTheVectorisedRealDotProductWidensBeforeMultiplying()
+    {
+        int length = 37;
+        Float[] left = new Float[length];
+        Float[] right = new Float[length];
+        for (int i = 0; i < length; i++) {
+            left[i] = 0.1f * (i + 1);
+            right[i] = 0.3f * (i + 1);
+        }
+
+        double expected = 0;
+        for (int i = 0; i < length; i++) {
+            expected += (double) (float) (0.1f * (i + 1)) * (double) (float) (0.3f * (i + 1));
+        }
+
+        assertThat(VectorMath.dotProduct(reals(left), reals(right), REAL_READER))
+                .isCloseTo(expected, within(1e-9));
+    }
+
+    /**
+     * A vector long enough that most of it is read in whatever the widest step happens to be, cut
+     * as a region so that its components start partway into a shared backing array. Dropping the
+     * tail and reading from index zero are the two mistakes a raw-array fast path makes, and each
+     * changes the answer here.
+     */
+    @Test
+    public void testALongDotProductRegionIsReadFromItsOwnOffsetThroughout()
+    {
+        int length = 37;
+        Double[] backing = new Double[length + 5];
+        for (int i = 0; i < backing.length; i++) {
+            backing[i] = (double) i;
+        }
+        Block region = doubles(backing).getRegion(5, length);
+
+        Double[] ones = new Double[length];
+        java.util.Arrays.fill(ones, 1.0);
+        double sum = 0;
+        double sumOfSquares = 0;
+        Double[] same = new Double[length];
+        for (int i = 0; i < length; i++) {
+            same[i] = (double) (i + 5);
+            sum += i + 5;
+            sumOfSquares += (double) (i + 5) * (i + 5);
+        }
+
+        assertThat(VectorMath.dotProduct(region, doubles(ones), DOUBLE_READER))
+                .isCloseTo(sum, within(1e-9));
+        assertThat(VectorMath.dotProduct(region, doubles(same), DOUBLE_READER))
+                .isCloseTo(sumOfSquares, within(1e-9));
+    }
+
+    @Test
+    public void testALongRealDotProductRegionIsReadFromItsOwnOffsetThroughout()
+    {
+        int length = 37;
+        Float[] backing = new Float[length + 5];
+        for (int i = 0; i < backing.length; i++) {
+            backing[i] = (float) i;
+        }
+        Block region = reals(backing).getRegion(5, length);
+
+        Float[] ones = new Float[length];
+        java.util.Arrays.fill(ones, 1.0f);
+        double sum = 0;
+        double sumOfSquares = 0;
+        Float[] same = new Float[length];
+        for (int i = 0; i < length; i++) {
+            same[i] = (float) (i + 5);
+            sum += i + 5;
+            sumOfSquares += (double) (i + 5) * (i + 5);
+        }
+
+        assertThat(VectorMath.dotProduct(region, reals(ones), REAL_READER))
+                .isCloseTo(sum, within(1e-9));
+        assertThat(VectorMath.dotProduct(region, reals(same), REAL_READER))
+                .isCloseTo(sumOfSquares, within(1e-9));
+    }
+
+    @Test
+    public void testADictionaryEncodedRealVectorDotProductIsReadThroughItsPositions()
+    {
+        Block dictionary = reals(9.0f, 3.0f, 4.0f, 7.0f);
+        Block vector = DictionaryBlock.create(2, dictionary, new int[] {1, 2});
+
+        assertThat(VectorMath.dotProduct(vector, reals(1.0f, 1.0f), REAL_READER))
+                .isCloseTo(7.0, within(1e-9));
+    }
+
+    @Test
+    public void testARunLengthEncodedRealVectorDotProductIsReadThroughItsPositions()
+    {
+        Block vector = RunLengthEncodedBlock.create(reals(2.0f), 3);
+
+        assertThat(VectorMath.dotProduct(vector, reals(1.0f, 1.0f, 1.0f), REAL_READER))
+                .isCloseTo(6.0, within(1e-9));
+    }
+
     @Test
     public void testNorm()
     {

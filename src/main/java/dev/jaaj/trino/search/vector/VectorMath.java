@@ -272,10 +272,112 @@ final class VectorMath
         return sum;
     }
 
+    /**
+     * There is no bounded form. Every term is a product of two signed components, so a partial sum
+     * says nothing about the total and no candidate can be abandoned before its last component.
+     * {@link Metric#DOT_PRODUCT} keeps the default {@code computeBounded} for that reason, which is
+     * why nothing below carries a limit or pays for a check.
+     * <p>
+     * The two fast paths are guarded exactly as in {@link #euclideanSquaredBounded}, and for the
+     * reasons given there: only a plain array block stores a vector's components contiguously and
+     * in order, and the reader identity is what ties the raw longs or ints to a floating point type
+     * rather than to some other value of the same width.
+     */
     static double dotProduct(Block first, Block second, VectorReader reader)
     {
-        double sum = 0.0;
-        for (int i = 0; i < first.getPositionCount(); i++) {
+        if (reader == VectorReader.DOUBLE_READER
+                && first instanceof LongArrayBlock left
+                && second instanceof LongArrayBlock right
+                && !left.mayHaveNull()
+                && !right.mayHaveNull()) {
+            return dotProductVectorized(left, right);
+        }
+        if (reader == VectorReader.REAL_READER
+                && first instanceof IntArrayBlock left
+                && second instanceof IntArrayBlock right
+                && !left.mayHaveNull()
+                && !right.mayHaveNull()) {
+            return dotProductVectorized(left, right);
+        }
+        return dotProductUnrolled(first, second, reader);
+    }
+
+    private static double dotProductVectorized(LongArrayBlock first, LongArrayBlock second)
+    {
+        long[] leftBits = first.getRawValues();
+        long[] rightBits = second.getRawValues();
+        int leftBase = first.getRawValuesOffset();
+        int rightBase = second.getRawValuesOffset();
+        int length = first.getPositionCount();
+
+        DoubleVector sum = DoubleVector.zero(DOUBLE_SPECIES);
+        int lanes = LONG_SPECIES.length();
+        int vectorized = LONG_SPECIES.loopBound(length);
+        int i = 0;
+        for (; i < vectorized; i += lanes) {
+            DoubleVector left = LongVector.fromArray(LONG_SPECIES, leftBits, leftBase + i).reinterpretAsDoubles();
+            DoubleVector right = LongVector.fromArray(LONG_SPECIES, rightBits, rightBase + i).reinterpretAsDoubles();
+            sum = left.fma(right, sum);
+        }
+
+        double total = sum.reduceLanes(VectorOperators.ADD);
+        for (; i < length; i++) {
+            total += Double.longBitsToDouble(leftBits[leftBase + i])
+                    * Double.longBitsToDouble(rightBits[rightBase + i]);
+        }
+        return total;
+    }
+
+    private static double dotProductVectorized(IntArrayBlock first, IntArrayBlock second)
+    {
+        int[] leftBits = first.getRawValues();
+        int[] rightBits = second.getRawValues();
+        int leftBase = first.getRawValuesOffset();
+        int rightBase = second.getRawValuesOffset();
+        int length = first.getPositionCount();
+
+        DoubleVector sum = DoubleVector.zero(DOUBLE_SPECIES);
+        int lanes = INT_SPECIES.length();
+        int vectorized = INT_SPECIES.loopBound(length);
+        int i = 0;
+        for (; i < vectorized; i += lanes) {
+            FloatVector left = IntVector.fromArray(INT_SPECIES, leftBits, leftBase + i).reinterpretAsFloats();
+            FloatVector right = IntVector.fromArray(INT_SPECIES, rightBits, rightBase + i).reinterpretAsFloats();
+            for (int part = 0; part < WIDENING_PARTS; part++) {
+                sum = ((DoubleVector) left.convertShape(VectorOperators.F2D, DOUBLE_SPECIES, part))
+                        .fma((DoubleVector) right.convertShape(VectorOperators.F2D, DOUBLE_SPECIES, part), sum);
+            }
+        }
+
+        double total = sum.reduceLanes(VectorOperators.ADD);
+        for (; i < length; i++) {
+            // Both casts are load-bearing: without them this multiplies in float, which is neither
+            // what the lanes above do nor what VectorReader.read gives every other path.
+            total += (double) Float.intBitsToFloat(leftBits[leftBase + i])
+                    * (double) Float.intBitsToFloat(rightBits[rightBase + i]);
+        }
+        return total;
+    }
+
+    private static double dotProductUnrolled(Block first, Block second, VectorReader reader)
+    {
+        int length = first.getPositionCount();
+        double sum0 = 0.0;
+        double sum1 = 0.0;
+        double sum2 = 0.0;
+        double sum3 = 0.0;
+
+        int unrolled = length - (length % UNROLL);
+        int i = 0;
+        for (; i < unrolled; i += UNROLL) {
+            sum0 += reader.read(first, i) * reader.read(second, i);
+            sum1 += reader.read(first, i + 1) * reader.read(second, i + 1);
+            sum2 += reader.read(first, i + 2) * reader.read(second, i + 2);
+            sum3 += reader.read(first, i + 3) * reader.read(second, i + 3);
+        }
+
+        double sum = (sum0 + sum1) + (sum2 + sum3);
+        for (; i < length; i++) {
             sum += reader.read(first, i) * reader.read(second, i);
         }
         return sum;
