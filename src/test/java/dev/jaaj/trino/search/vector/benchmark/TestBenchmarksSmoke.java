@@ -70,4 +70,11 @@ public class TestBenchmarksSmoke
     {
         smokeRun(BenchmarkKnnHeap.class, Map.of("k", "10", "arrivalOrder", "RANDOM"));
     }
+
+    @Test
+    public void testKnnAccumulator()
+            throws RunnerException
+    {
+        smokeRun(BenchmarkKnnAccumulator.class, Map.of("dimension", "8", "metricName", "euclidean", "k", "10"));
+    }
 }
