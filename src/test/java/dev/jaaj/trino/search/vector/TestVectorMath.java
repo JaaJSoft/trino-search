@@ -21,7 +21,9 @@ import io.trino.spi.block.RunLengthEncodedBlock;
 import org.junit.jupiter.api.Test;
 
 import static dev.jaaj.trino.search.vector.VectorReader.DOUBLE_READER;
+import static dev.jaaj.trino.search.vector.VectorReader.REAL_READER;
 import static io.trino.spi.type.DoubleType.DOUBLE;
+import static io.trino.spi.type.RealType.REAL;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
@@ -37,6 +39,20 @@ public class TestVectorMath
             }
             else {
                 DOUBLE.writeDouble(builder, value);
+            }
+        }
+        return builder.build();
+    }
+
+    private static Block reals(Float... values)
+    {
+        BlockBuilder builder = REAL.createBlockBuilder(null, values.length);
+        for (Float value : values) {
+            if (value == null) {
+                builder.appendNull();
+            }
+            else {
+                REAL.writeFloat(builder, value);
             }
         }
         return builder.build();
@@ -267,5 +283,93 @@ public class TestVectorMath
         }
         assertThat(VectorMath.euclideanSquared(region, doubles(zeroes), DOUBLE_READER))
                 .isCloseTo(sumOfSquares, within(1e-9));
+    }
+
+    /**
+     * The array(real) counterparts of the block shapes above. An array(real) vector is an
+     * IntArrayBlock of float bits rather than a LongArrayBlock, so it needs its own coverage
+     * before its backing array is indexed directly.
+     */
+    @Test
+    public void testADictionaryEncodedRealVectorIsReadThroughItsPositions()
+    {
+        Block dictionary = reals(9.0f, 3.0f, 4.0f, 7.0f);
+        Block vector = DictionaryBlock.create(2, dictionary, new int[] {1, 2});
+
+        assertThat(VectorMath.euclideanSquared(vector, reals(0.0f, 0.0f), REAL_READER))
+                .isCloseTo(25.0, within(1e-12));
+    }
+
+    @Test
+    public void testARunLengthEncodedRealVectorIsReadThroughItsPositions()
+    {
+        Block vector = RunLengthEncodedBlock.create(reals(2.0f), 3);
+
+        assertThat(VectorMath.euclideanSquared(vector, reals(0.0f, 0.0f, 0.0f), REAL_READER))
+                .isCloseTo(12.0, within(1e-12));
+    }
+
+    /**
+     * Long enough that most of it is read in whatever the widest step happens to be, with every
+     * component differing from its neighbour so that starting one position early changes the
+     * answer. The short cases above never reach a wide iteration, so they would leave the offset
+     * exercised only on the one-component-at-a-time tail.
+     */
+    @Test
+    public void testALongRealRegionIsReadFromItsOwnOffsetThroughout()
+    {
+        int length = 37;
+        Float[] backing = new Float[length + 5];
+        for (int i = 0; i < backing.length; i++) {
+            backing[i] = (float) i;
+        }
+        Block region = reals(backing).getRegion(5, length);
+
+        Float[] expected = new Float[length];
+        for (int i = 0; i < length; i++) {
+            expected[i] = (float) (i + 5);
+        }
+        assertThat(VectorMath.euclideanSquared(region, reals(expected), REAL_READER))
+                .isEqualTo(0.0);
+
+        Float[] zeroes = new Float[length];
+        java.util.Arrays.fill(zeroes, 0.0f);
+        double sumOfSquares = 0;
+        for (int i = 0; i < length; i++) {
+            sumOfSquares += (double) (i + 5) * (i + 5);
+        }
+        assertThat(VectorMath.euclideanSquared(region, reals(zeroes), REAL_READER))
+                .isCloseTo(sumOfSquares, within(1e-9));
+    }
+
+    /**
+     * The widening must happen before the subtraction, not after it. Two floats subtracted as
+     * floats round the difference to float precision, and widening that afterwards cannot recover
+     * what was lost. The values below are chosen so the difference is not exactly representable,
+     * and the length leaves a tail so the vectorised body and the scalar remainder are both
+     * covered: an earlier version of this test used whole numbers, where a float subtraction is
+     * exact and the mistake is invisible.
+     */
+    @Test
+    public void testRealVectorsSubtractInDoubleNotInFloat()
+    {
+        // Operands within a factor of two of each other subtract exactly in float, by Sterbenz,
+        // which hides the mistake. A constant ratio of three keeps every pair outside that range.
+        int length = 37;
+        Float[] left = new Float[length];
+        Float[] right = new Float[length];
+        for (int i = 0; i < length; i++) {
+            left[i] = 0.1f * (i + 1);
+            right[i] = 0.3f * (i + 1);
+        }
+
+        double expected = 0;
+        for (int i = 0; i < length; i++) {
+            double difference = (double) (float) (0.1f * (i + 1)) - (double) (float) (0.3f * (i + 1));
+            expected += difference * difference;
+        }
+
+        assertThat(VectorMath.euclideanSquared(reals(left), reals(right), REAL_READER))
+                .isCloseTo(expected, within(1e-15));
     }
 }

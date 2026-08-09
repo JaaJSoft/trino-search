@@ -15,8 +15,11 @@ package dev.jaaj.trino.search.vector;
 
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
+import io.trino.spi.block.IntArrayBlock;
 import io.trino.spi.block.LongArrayBlock;
 import jdk.incubator.vector.DoubleVector;
+import jdk.incubator.vector.FloatVector;
+import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.LongVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
@@ -38,6 +41,13 @@ final class VectorMath
      * its own class body, so a JVM able to run the engine is a JVM able to run this.
      */
     private static final VectorSpecies<Long> LONG_SPECIES = LongVector.SPECIES_PREFERRED;
+
+    /**
+     * Both take the preferred shape, so an integer vector holds exactly twice the lanes of a double
+     * one and a widened float vector fills exactly two of them.
+     */
+    private static final VectorSpecies<Integer> INT_SPECIES = IntVector.SPECIES_PREFERRED;
+    private static final VectorSpecies<Double> DOUBLE_SPECIES = DoubleVector.SPECIES_PREFERRED;
 
     private VectorMath() {}
 
@@ -76,6 +86,13 @@ final class VectorMath
                 && !right.mayHaveNull()) {
             return euclideanSquaredVectorized(left, right);
         }
+        if (reader == VectorReader.REAL_READER
+                && first instanceof IntArrayBlock left
+                && second instanceof IntArrayBlock right
+                && !left.mayHaveNull()
+                && !right.mayHaveNull()) {
+            return euclideanSquaredVectorizedReal(left, right);
+        }
         return euclideanSquaredUnrolled(first, second, reader);
     }
 
@@ -92,7 +109,7 @@ final class VectorMath
         int rightBase = second.getRawValuesOffset();
         int length = first.getPositionCount();
 
-        DoubleVector sum = DoubleVector.zero(DoubleVector.SPECIES_PREFERRED);
+        DoubleVector sum = DoubleVector.zero(DOUBLE_SPECIES);
         int vectorized = LONG_SPECIES.loopBound(length);
         int i = 0;
         for (; i < vectorized; i += LONG_SPECIES.length()) {
@@ -109,6 +126,60 @@ final class VectorMath
             total += difference * difference;
         }
         return total;
+    }
+
+    /**
+     * The raw ints hold float bits, so reinterpreting the lanes is free. Widening them to double
+     * before any arithmetic is not an optimisation choice: the contract is float inputs and double
+     * arithmetic, and accumulating in float lanes instead would change every result this function
+     * has ever returned.
+     * <p>
+     * Widening halves the lanes, so one vector of ints becomes two of doubles and the density
+     * advantage of float over double is spent on the conversion rather than on speed. What remains
+     * is the whole gain over reading one component at a time, plus half as many bytes to fetch.
+     */
+    private static double euclideanSquaredVectorizedReal(IntArrayBlock first, IntArrayBlock second)
+    {
+        int[] leftBits = first.getRawValues();
+        int[] rightBits = second.getRawValues();
+        int leftBase = first.getRawValuesOffset();
+        int rightBase = second.getRawValuesOffset();
+        int length = first.getPositionCount();
+
+        DoubleVector lowSum = DoubleVector.zero(DOUBLE_SPECIES);
+        DoubleVector highSum = DoubleVector.zero(DOUBLE_SPECIES);
+        int vectorized = INT_SPECIES.loopBound(length);
+        int i = 0;
+        for (; i < vectorized; i += INT_SPECIES.length()) {
+            FloatVector left = IntVector.fromArray(INT_SPECIES, leftBits, leftBase + i).reinterpretAsFloats();
+            FloatVector right = IntVector.fromArray(INT_SPECIES, rightBits, rightBase + i).reinterpretAsFloats();
+            lowSum = accumulateWidenedHalf(lowSum, left, right, 0);
+            highSum = accumulateWidenedHalf(highSum, left, right, 1);
+        }
+
+        double total = lowSum.add(highSum).reduceLanes(VectorOperators.ADD);
+        for (; i < length; i++) {
+            // Widen before subtracting. Both operands are floats, so subtracting them first
+            // rounds the difference to float precision and only then widens, which is not what
+            // the vectorised body above does and not what the reader-based loop ever did.
+            double difference = (double) Float.intBitsToFloat(leftBits[leftBase + i])
+                    - (double) Float.intBitsToFloat(rightBits[rightBase + i]);
+            total += difference * difference;
+        }
+        return total;
+    }
+
+    /**
+     * One accumulator per half, for the same reason the scalar loop keeps four: the two halves of a
+     * widened vector are independent, and folding both into one sum would put them back on a single
+     * dependency chain.
+     */
+    private static DoubleVector accumulateWidenedHalf(DoubleVector sum, FloatVector left, FloatVector right, int half)
+    {
+        DoubleVector widenedLeft = (DoubleVector) left.convertShape(VectorOperators.F2D, DOUBLE_SPECIES, half);
+        DoubleVector widenedRight = (DoubleVector) right.convertShape(VectorOperators.F2D, DOUBLE_SPECIES, half);
+        DoubleVector difference = widenedLeft.sub(widenedRight);
+        return difference.fma(difference, sum);
     }
 
     private static double euclideanSquaredUnrolled(Block first, Block second, VectorReader reader)
