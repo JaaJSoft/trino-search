@@ -85,7 +85,16 @@ public class BenchmarkKnnAggQuery
         queryRunner.installPlugin(new MemoryPlugin());
         // The default max-data-per-node is 128 MB, which the largest shape exceeds by an order of
         // magnitude and which would make CREATE TABLE fail rather than any measurement.
-        queryRunner.createCatalog("memory", "memory", Map.of("memory.max-data-per-node", "2GB"));
+        //
+        // splits-per-node defaults to the processor count, which a CPU-constrained container
+        // reports as 1: that would collapse the plan to a single aggregation stage, the one shape
+        // that never exercises KnnStateSerializer or the combine function. Pinning it also fixes
+        // the scan parallelism, so the measured numbers do not silently change with the core count
+        // of whatever machine runs them.
+        queryRunner.createCatalog(
+                "memory",
+                "memory",
+                Map.of("memory.max-data-per-node", "2GB", "memory.splits-per-node", "4"));
         queryRunner.installPlugin(new SearchPlugin());
 
         queryRunner.execute("CREATE TABLE memory.default.vectors AS " + generatingQuery(rows, dimension));

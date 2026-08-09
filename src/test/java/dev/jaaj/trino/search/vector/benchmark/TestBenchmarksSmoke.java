@@ -88,9 +88,9 @@ public class TestBenchmarksSmoke
     /**
      * The benchmark is only worth reading if the plan actually splits into a partial aggregation
      * per split plus a final one that merges them: that is the only shape exercising
-     * KnnStateSerializer and the combine function. MemoryConfig defaults splits-per-node to the
-     * processor count, so this holds without configuration, but it is asserted rather than
-     * assumed.
+     * KnnStateSerializer and the combine function. The benchmark pins splits-per-node rather than
+     * trusting the default, so this holds regardless of the machine it runs on, but it is
+     * asserted rather than assumed.
      */
     @Test
     public void testKnnAggQueryPlanHasPartialAndFinalAggregation()
