@@ -31,12 +31,29 @@ public enum Metric
         {
             return VectorMath.euclidean(first, second, reader);
         }
+
+        /**
+         * The accumulation is squared while the limit is a distance, so the limit is squared to
+         * meet it. Comparing a partial sum of squares against the limit as given would abandon
+         * candidates that beat it, silently returning the wrong neighbours.
+         */
+        @Override
+        public double computeBounded(Block first, Block second, VectorReader reader, double limit)
+        {
+            return Math.sqrt(VectorMath.euclideanSquaredBounded(first, second, reader, limit * limit));
+        }
     },
     EUCLIDEAN_SQUARED("euclidean_squared", false) {
         @Override
         public double compute(Block first, Block second, VectorReader reader)
         {
             return VectorMath.euclideanSquared(first, second, reader);
+        }
+
+        @Override
+        public double computeBounded(Block first, Block second, VectorReader reader, double limit)
+        {
+            return VectorMath.euclideanSquaredBounded(first, second, reader, limit);
         }
     },
     COSINE("cosine", false) {
@@ -73,6 +90,22 @@ public enum Metric
     }
 
     public abstract double compute(Block first, Block second, VectorReader reader);
+
+    /**
+     * The metric value, or, once the components read so far already show the candidate cannot beat
+     * {@code limit}, some value that cannot beat it either. A caller ranking candidates against a
+     * running best is asking whether this one wins, not what its exact value is, and for a metric
+     * accumulated from non-negative terms that question is often settled long before the last
+     * component.
+     * <p>
+     * Metrics whose terms are signed, which here means the ones that rank higher as closer, cannot
+     * settle it early: a partial sum says nothing about the total. They compute the whole thing and
+     * ignore the limit, which is what this default does.
+     */
+    public double computeBounded(Block first, Block second, VectorReader reader, double limit)
+    {
+        return compute(first, second, reader);
+    }
 
     public String sqlName()
     {

@@ -187,7 +187,11 @@ public final class KnnAggregation
             return;
         }
 
-        state.addToHeap(key, position, metric.compute(vector, queryVector, reader));
+        // Handing the heap's current cut-off to the metric lets a candidate that cannot make the
+        // result be abandoned part way through its distance, which once k neighbours are in is
+        // most of them.
+        double distance = metric.computeBounded(vector, queryVector, reader, state.getHeap().retentionLimit());
+        state.addToHeap(key, position, distance);
     }
 
     private static void mergeStates(KnnState state, KnnState otherState)

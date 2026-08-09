@@ -83,6 +83,53 @@ public class TestMetric
         assertThat(Metric.DOT_PRODUCT.compute(doubles(1.0, 2.0), doubles(3.0, 4.0), DOUBLE_READER)).isCloseTo(11.0, within(1e-12));
     }
 
+    /**
+     * Long enough to reach a checkpoint: a bounded computation only consults its limit after a
+     * run of components, so a two-component vector never gives up whatever the limit says and
+     * cannot tell a correct implementation from a wrong one.
+     */
+    private static Block spike(double first, int length)
+    {
+        double[] values = new double[length];
+        values[0] = first;
+        return doubles(values);
+    }
+
+    /**
+     * The accumulation is squared while the limit is a distance, so the two live in different
+     * spaces and neither can be compared against the other as given. A candidate at distance 3
+     * beats a limit of 4; its squared accumulation reaches 9, which does not. An implementation
+     * comparing the partial sum against the raw limit abandons this candidate and loses a
+     * neighbour that belongs in the result.
+     */
+    @Test
+    public void testEuclideanGivesUpInSquaredSpace()
+    {
+        assertThat(Metric.EUCLIDEAN.computeBounded(spike(0.0, 512), spike(3.0, 512), DOUBLE_READER, 4.0))
+                .isCloseTo(3.0, within(1e-12));
+    }
+
+    @Test
+    public void testEuclideanGivesUpOnACandidateThatCannotWin()
+    {
+        assertThat(Metric.EUCLIDEAN.computeBounded(spike(0.0, 512), spike(30.0, 512), DOUBLE_READER, 4.0))
+                .isGreaterThan(4.0);
+    }
+
+    /**
+     * Dot product ranks higher as closer, so its terms are signed and a partial sum says nothing
+     * about the total. Its bounded form has to compute the whole thing.
+     */
+    @Test
+    public void testASignedMetricIgnoresTheLimit()
+    {
+        Block first = doubles(-100.0, 1.0);
+        Block second = doubles(1.0, 1.0);
+
+        assertThat(Metric.DOT_PRODUCT.computeBounded(first, second, DOUBLE_READER, 0.0))
+                .isEqualTo(Metric.DOT_PRODUCT.compute(first, second, DOUBLE_READER));
+    }
+
     @Test
     public void testCosineMetricIsADistance()
     {

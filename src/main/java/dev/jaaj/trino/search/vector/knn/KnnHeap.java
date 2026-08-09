@@ -84,6 +84,19 @@ public final class KnnHeap
     }
 
     /**
+     * The distance a candidate has to beat to be retained, for a caller that can stop computing one
+     * as soon as it knows the answer is no. While the heap has room that is an infinity in the
+     * losing direction, since nothing is turned away yet.
+     */
+    double retentionLimit()
+    {
+        if (size < k) {
+            return higherIsCloser ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY;
+        }
+        return distances[0];
+    }
+
+    /**
      * The other heap's keys are already single-position blocks it owns, so they move over as they
      * are. Both heaps count them for as long as both are alive, which over-reports rather than
      * under-reports and settles as soon as the merged-from state is dropped.

@@ -160,6 +160,52 @@ public class TestVectorMath
     }
 
     @Test
+    public void testBoundedEuclideanSquaredIsExactWhenTheCandidateBeatsTheLimit()
+    {
+        assertThat(VectorMath.euclideanSquaredBounded(doubles(0.0, 0.0), doubles(3.0, 4.0), DOUBLE_READER, 26.0))
+                .isCloseTo(25.0, within(1e-12));
+    }
+
+    /**
+     * The limit is passed once the excess is already spent, several checks before the end of the
+     * vector: what this pins is that giving up early still reports a value the caller cannot
+     * mistake for a winning one, and that the components never read do not have to be zero for
+     * that to hold.
+     */
+    @Test
+    public void testBoundedEuclideanSquaredGivesUpOnALongVectorWithItsExcessUpFront()
+    {
+        int length = 512;
+        Double[] far = new Double[length];
+        Double[] origin = new Double[length];
+        java.util.Arrays.fill(far, 1.0);
+        java.util.Arrays.fill(origin, 0.0);
+
+        assertThat(VectorMath.euclideanSquaredBounded(doubles(origin), doubles(far), DOUBLE_READER, 10.0))
+                .isGreaterThan(10.0);
+    }
+
+    @Test
+    public void testBoundedEuclideanSquaredIsExactAcrossManyChecks()
+    {
+        int length = 512;
+        Double[] ones = new Double[length];
+        Double[] origin = new Double[length];
+        java.util.Arrays.fill(ones, 1.0);
+        java.util.Arrays.fill(origin, 0.0);
+
+        assertThat(VectorMath.euclideanSquaredBounded(doubles(origin), doubles(ones), DOUBLE_READER, 1e9))
+                .isCloseTo(length, within(1e-9));
+    }
+
+    @Test
+    public void testBoundedEuclideanSquaredOnRealsIsExactWhenItBeatsTheLimit()
+    {
+        assertThat(VectorMath.euclideanSquaredBounded(reals(0.0f, 0.0f), reals(3.0f, 4.0f), REAL_READER, 26.0))
+                .isCloseTo(25.0, within(1e-9));
+    }
+
+    @Test
     public void testEuclidean()
     {
         // 3-4-5 triangle
