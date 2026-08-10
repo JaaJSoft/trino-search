@@ -18,6 +18,8 @@ import io.trino.spi.block.Block;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.block.DictionaryBlock;
 import io.trino.spi.block.RunLengthEncodedBlock;
+import jdk.incubator.vector.IntVector;
+import jdk.incubator.vector.LongVector;
 import org.junit.jupiter.api.Test;
 
 import static dev.jaaj.trino.search.vector.VectorReader.DOUBLE_READER;
@@ -30,6 +32,19 @@ import static org.assertj.core.api.Assertions.within;
 
 public class TestVectorMath
 {
+    /**
+     * Two whole vectors of the step the kernels actually take on the running machine, plus one
+     * component that cannot fill a third. A hardcoded length instead ties the test to an assumption
+     * about lane count that it never states: on a machine whose preferred species is wider, the
+     * loop bound falls to zero, the whole vector is read by the scalar remainder, and the test goes
+     * on passing without ever reaching the lanes it exists to pin.
+     * <p>
+     * The double kernels step by the long species and the {@code array(real)} ones by the int
+     * species, which is half as many components per step, so the two lengths differ.
+     */
+    private static final int DOUBLE_LANE_SPANNING_LENGTH = 2 * LongVector.SPECIES_PREFERRED.length() + 1;
+    private static final int REAL_LANE_SPANNING_LENGTH = 2 * IntVector.SPECIES_PREFERRED.length() + 1;
+
     private static Block doubles(Double... values)
     {
         BlockBuilder builder = DOUBLE.createBlockBuilder(null, values.length);
@@ -245,7 +260,7 @@ public class TestVectorMath
     @Test
     public void testTheVectorisedRealDotProductWidensBeforeMultiplying()
     {
-        int length = 37;
+        int length = REAL_LANE_SPANNING_LENGTH;
         Float[] left = new Float[length];
         Float[] right = new Float[length];
         for (int i = 0; i < length; i++) {
@@ -263,15 +278,15 @@ public class TestVectorMath
     }
 
     /**
-     * A vector long enough that most of it is read in whatever the widest step happens to be, cut
-     * as a region so that its components start partway into a shared backing array. Dropping the
-     * tail and reading from index zero are the two mistakes a raw-array fast path makes, and each
-     * changes the answer here.
+     * A vector spanning several whole steps of the wide loop with components left over for the
+     * remainder, cut as a region so that it starts partway into a shared backing array. Dropping
+     * the tail and reading from index zero are the two mistakes a raw-array fast path makes, and
+     * each changes the answer here.
      */
     @Test
     public void testALongDotProductRegionIsReadFromItsOwnOffsetThroughout()
     {
-        int length = 37;
+        int length = DOUBLE_LANE_SPANNING_LENGTH;
         Double[] backing = new Double[length + 5];
         for (int i = 0; i < backing.length; i++) {
             backing[i] = (double) i;
@@ -298,7 +313,7 @@ public class TestVectorMath
     @Test
     public void testALongRealDotProductRegionIsReadFromItsOwnOffsetThroughout()
     {
-        int length = 37;
+        int length = REAL_LANE_SPANNING_LENGTH;
         Float[] backing = new Float[length + 5];
         for (int i = 0; i < backing.length; i++) {
             backing[i] = (float) i;
