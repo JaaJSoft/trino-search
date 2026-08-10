@@ -59,7 +59,7 @@ detection, and it is not a substitute for a learned embedding model.
 
 ```sql
 -- three nearest titles per category, embedded on the fly
-SELECT category, knn_agg(id, to_vector_double(title, 256, 'word'), to_vector_double('trino query engine', 256, 'word'), 3, 'cosine')
+SELECT category, knn_agg(id, to_vector_double(title, 256, 'word'), to_vector_double('trino query engine', 256, 'word'), 3, 'euclidean')
 FROM documents
 GROUP BY category;
 ```
