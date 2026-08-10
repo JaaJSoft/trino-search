@@ -197,9 +197,18 @@
                         </configuration>
                     </execution>
 
+                    <!--
+                      The tests name the preferred species too, to size a vector against the
+                      running machine's lane count rather than against a number that stops
+                      reaching the wide loop on a wider one. The test JVM already gets the module
+                      through air.test.jvm.additional-arguments; this is the compile-time half.
+                    -->
                     <execution>
                         <id>default-testCompile</id>
                         <configuration>
+                            <compilerArgs>
+                                <arg>--add-modules=jdk.incubator.vector</arg>
+                            </compilerArgs>
                             <annotationProcessorPathsUseDepMgmt>true</annotationProcessorPathsUseDepMgmt>
                             <annotationProcessorPaths>
                                 <path>
