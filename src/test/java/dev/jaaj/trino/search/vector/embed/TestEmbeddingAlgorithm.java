@@ -96,4 +96,50 @@ public class TestEmbeddingAlgorithm
                 .hasMessageContaining("Unknown embedding algorithm 'bag_of_words'")
                 .hasMessageContaining("word");
     }
+
+    @Test
+    public void testCharNgramSlidesOverEveryCodePointIncludingSpaces()
+    {
+        assertThat(tokens(EmbeddingAlgorithm.CHAR_3GRAM, "ab cd"))
+                .containsExactly("ab ", "b c", " cd");
+    }
+
+    @Test
+    public void testCharNgramIsSensitiveToOrder()
+    {
+        assertThat(tokens(EmbeddingAlgorithm.CHAR_3GRAM, "abc"))
+                .isNotEqualTo(tokens(EmbeddingAlgorithm.CHAR_3GRAM, "cba"));
+    }
+
+    @Test
+    public void testCharNgramSizesDiffer()
+    {
+        assertThat(tokens(EmbeddingAlgorithm.CHAR_4GRAM, "abcde")).containsExactly("abcd", "bcde");
+        assertThat(tokens(EmbeddingAlgorithm.CHAR_5GRAM, "abcde")).containsExactly("abcde");
+    }
+
+    /**
+     * The window is a window over code points, not over bytes. A three-code-point text of
+     * multi-byte characters must yield exactly one trigram, spanning all of its bytes.
+     */
+    @Test
+    public void testCharNgramWindowsCodePointsNotBytes()
+    {
+        assertThat(tokens(EmbeddingAlgorithm.CHAR_3GRAM, "éàü")).containsExactly("éàü");
+    }
+
+    @Test
+    public void testCharNgramOnTextShorterThanTheWindowYieldsNoToken()
+    {
+        assertThat(tokens(EmbeddingAlgorithm.CHAR_5GRAM, "abcd")).isEmpty();
+        assertThat(tokens(EmbeddingAlgorithm.CHAR_3GRAM, "")).isEmpty();
+    }
+
+    @Test
+    public void testEveryAlgorithmResolvesByItsSqlName()
+    {
+        for (EmbeddingAlgorithm algorithm : EmbeddingAlgorithm.values()) {
+            assertThat(EmbeddingAlgorithm.fromName(algorithm.sqlName())).isEqualTo(algorithm);
+        }
+    }
 }

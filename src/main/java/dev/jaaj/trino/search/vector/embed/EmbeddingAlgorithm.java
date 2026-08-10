@@ -46,6 +46,27 @@ enum EmbeddingAlgorithm
                 sink.accept(text, start, position - start);
             }
         }
+    },
+    CHAR_3GRAM("char_3gram") {
+        @Override
+        void forEachToken(Slice text, TokenSink sink)
+        {
+            forEachCodePointWindow(text, 3, sink);
+        }
+    },
+    CHAR_4GRAM("char_4gram") {
+        @Override
+        void forEachToken(Slice text, TokenSink sink)
+        {
+            forEachCodePointWindow(text, 4, sink);
+        }
+    },
+    CHAR_5GRAM("char_5gram") {
+        @Override
+        void forEachToken(Slice text, TokenSink sink)
+        {
+            forEachCodePointWindow(text, 5, sink);
+        }
     };
 
     private final String sqlName;
@@ -84,5 +105,30 @@ enum EmbeddingAlgorithm
                 "Unknown embedding algorithm '%s', expected one of: %s".formatted(
                         name,
                         Stream.of(values()).map(algorithm -> algorithm.sqlName).toList()));
+    }
+
+    /**
+     * Emits every window of {@code size} consecutive code points, as a byte range.
+     * <p>
+     * The ring holds the byte offset at which each of the last {@code size} code points starts,
+     * which is what turns a window counted in code points into a range counted in bytes. Without
+     * it the window would have to be re-walked from its start on every step, making the whole
+     * tokenization quadratic in the length of the text.
+     */
+    private static void forEachCodePointWindow(Slice text, int size, TokenSink sink)
+    {
+        int length = text.length();
+        int[] starts = new int[size];
+        int seen = 0;
+        int position = 0;
+        while (position < length) {
+            starts[seen % size] = position;
+            position += SliceUtf8.lengthOfCodePoint(text, position);
+            seen++;
+            if (seen >= size) {
+                int start = starts[(seen - size) % size];
+                sink.accept(text, start, position - start);
+            }
+        }
     }
 }
