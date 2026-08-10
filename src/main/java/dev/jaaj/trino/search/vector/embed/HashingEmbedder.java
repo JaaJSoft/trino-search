@@ -25,8 +25,9 @@ import io.airlift.slice.XxHash64;
 final class HashingEmbedder
 {
     /**
-     * A ceiling rather than an absence of one, so that a mistyped dimension fails with a clear
-     * message instead of asking for an array the JVM cannot allocate.
+     * The ceiling {@link EmbeddingFunctions} rejects a larger dimension against, so that a
+     * mistyped one fails with a clear message instead of asking for an array the JVM cannot
+     * allocate. Nothing here enforces it: this class allocates whatever length it is handed.
      */
     static final int MAX_DIMENSION = 65536;
 

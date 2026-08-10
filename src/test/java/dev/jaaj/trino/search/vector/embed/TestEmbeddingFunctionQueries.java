@@ -96,13 +96,18 @@ public class TestEmbeddingFunctionQueries
 
     /**
      * A text column with an empty row must not fail the scan, which is why this returns the zero
-     * vector where normalize_vector raises on a zero magnitude.
+     * vector where normalize_vector raises on a zero magnitude. Text shorter than the n-gram
+     * window is the same case and the less obvious one, since the text is neither empty nor
+     * punctuation: no window fits in it, so it has no token to hash.
      */
     @Test
     public void testTextWithoutTokenGivesTheZeroVector()
     {
         assertQuery(
                 "SELECT to_vector_double('!!!', 4, 'word')",
+                "SELECT ARRAY[CAST(0.0 AS DOUBLE), CAST(0.0 AS DOUBLE), CAST(0.0 AS DOUBLE), CAST(0.0 AS DOUBLE)]");
+        assertQuery(
+                "SELECT to_vector_double('hi', 4, 'char_5gram')",
                 "SELECT ARRAY[CAST(0.0 AS DOUBLE), CAST(0.0 AS DOUBLE), CAST(0.0 AS DOUBLE), CAST(0.0 AS DOUBLE)]");
     }
 
