@@ -40,8 +40,9 @@ final class HashingEmbedder
         // tokenizers walk it by code point. Replacing the malformed sequences keeps one bad row
         // from failing the whole scan, the same contract that makes token-free text embed as the
         // zero vector instead of raising. Sanitising first rather than last is what puts
-        // toLowerCase itself on the input its contract assumes; on text that needs no repair
-        // fixInvalidUtf8 hands the same slice back, so the common path allocates nothing extra.
+        // toLowerCase itself on the input its contract assumes. fixInvalidUtf8's fast path is an
+        // ASCII check, not a well-formedness check: only ASCII text gets the same slice back, so
+        // any other text pays for a copy here in addition to the one toLowerCase already makes.
         Slice lowercased = SliceUtf8.toLowerCase(SliceUtf8.fixInvalidUtf8(text));
         algorithm.forEachToken(lowercased, (source, offset, length) -> {
             long hash = XxHash64.hash(source, offset, length);
