@@ -93,18 +93,25 @@ public class TestVectorMath
     /**
      * The counterpart of {@link #testRealVectorsWidenBeforeTheArithmetic} for the vectorised body.
      * That one passes a single component, so the whole of it runs in the scalar remainder and the
-     * widened lanes are never reached. This vector is long enough that most of it is read in
-     * whatever the widest step happens to be, with the remainder covered as well.
+     * widened lanes are never reached. This vector spans several whole steps of the wide loop with
+     * components left over for the remainder, so both are covered.
      * <p>
      * Operands within a factor of two of each other subtract exactly in float, by Sterbenz, which
      * hides the mistake this pins: the long region test above uses whole numbers and would pass
      * against lanes that subtracted as floats and widened afterwards. A constant ratio of three
      * keeps every pair outside that range.
+     * <p>
+     * The tolerance separates the two orders of magnitude that matter and nothing finer. Lanes
+     * reduced four at a time do not sum in the same order as the reference loop below, which costs
+     * a couple of last bits; subtracting in float instead of double costs seven decimal digits. A
+     * bound tight enough to reject the ordering would be asserting a bit-exact result that
+     * {@link VectorMath#euclideanSquared} does not promise, and would break on the next machine
+     * with a different lane count.
      */
     @Test
     public void testTheVectorisedRealBodyWidensBeforeSubtracting()
     {
-        int length = 37;
+        int length = REAL_LANE_SPANNING_LENGTH;
         Float[] left = new Float[length];
         Float[] right = new Float[length];
         for (int i = 0; i < length; i++) {
@@ -119,7 +126,7 @@ public class TestVectorMath
         }
 
         assertThat(VectorMath.euclideanSquared(reals(left), reals(right), REAL_READER))
-                .isCloseTo(expected, within(1e-15));
+                .isCloseTo(expected, within(1e-9));
     }
 
     @Test
@@ -149,7 +156,7 @@ public class TestVectorMath
     @Test
     public void testALongRealRegionIsReadFromItsOwnOffsetThroughout()
     {
-        int length = 37;
+        int length = REAL_LANE_SPANNING_LENGTH;
         Float[] backing = new Float[length + 5];
         for (int i = 0; i < backing.length; i++) {
             backing[i] = (float) i;
@@ -522,14 +529,14 @@ public class TestVectorMath
 
     /**
      * The region above is too short to reach a wide loop, which would leave the offset applied
-     * only on the one-component-at-a-time tail. This one is long enough that most of it is read in
+     * only on the one-component-at-a-time tail. This one spans several whole steps of it, read in
      * whatever the widest step happens to be on the running machine, and every component differs
      * from its neighbour so that starting even one position early changes the answer.
      */
     @Test
     public void testALongRegionIsReadFromItsOwnOffsetThroughout()
     {
-        int length = 37;
+        int length = DOUBLE_LANE_SPANNING_LENGTH;
         Double[] backing = new Double[length + 5];
         for (int i = 0; i < backing.length; i++) {
             backing[i] = (double) i;
