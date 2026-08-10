@@ -96,6 +96,49 @@ public class TestHashingEmbedder
                 .isEqualTo(embed("hello world", EmbeddingAlgorithm.WORD, 64));
     }
 
+    /**
+     * A token must land on the same feature wherever it appears, which is the whole reason
+     * hashing captures overlap at all. Mixing anything positional into the hash would leave every
+     * other test in this class green while making two texts that share words share no feature.
+     */
+    @Test
+    public void testATokenLandsOnTheSameFeatureWhereverItAppears()
+    {
+        assertThat(embed("alpha beta", EmbeddingAlgorithm.WORD, 4096))
+                .isEqualTo(embed("beta alpha", EmbeddingAlgorithm.WORD, 4096));
+    }
+
+    /**
+     * The shared words must land on the same features and the unshared ones must not, which is
+     * what the overlap the function is built to measure actually is. The three words shared with
+     * the reference sit at different offsets in the overlapping text, so a hash that carried any
+     * position would drop the shared contribution to zero and make the two comparisons equal.
+     * <p>
+     * The exact counts hold because these particular words happen to collide with none of the
+     * others at this dimension, which is a property of a fixed hash of fixed strings rather than
+     * luck to be re-rolled. Different words would need looser bounds.
+     */
+    @Test
+    public void testOverlappingTextsShareTheirFeatures()
+    {
+        double[] reference = embed("alpha beta gamma delta", EmbeddingAlgorithm.WORD, 4096);
+        double[] overlapping = embed("zeta alpha beta gamma", EmbeddingAlgorithm.WORD, 4096);
+        double[] disjoint = embed("north south east west", EmbeddingAlgorithm.WORD, 4096);
+
+        assertThat(dotProduct(reference, overlapping)).isGreaterThan(dotProduct(reference, disjoint));
+        assertThat(dotProduct(reference, overlapping)).isEqualTo(3.0);
+        assertThat(dotProduct(reference, disjoint)).isEqualTo(0.0);
+    }
+
+    private static double dotProduct(double[] first, double[] second)
+    {
+        double total = 0.0;
+        for (int i = 0; i < first.length; i++) {
+            total += first[i] * second[i];
+        }
+        return total;
+    }
+
     @Test
     public void testDifferentTextsGiveDifferentAccumulators()
     {

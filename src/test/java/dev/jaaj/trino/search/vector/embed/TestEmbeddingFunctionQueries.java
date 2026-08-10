@@ -141,6 +141,29 @@ public class TestEmbeddingFunctionQueries
                 .isCloseTo(1.0, within(1e-6));
     }
 
+    /**
+     * The claim the whole function rests on: shared words make texts close, and they do so no
+     * matter where in the text they sit. The shared words are deliberately at different offsets
+     * in the two texts, so anything positional in the hash would push the overlapping pair out to
+     * the distance of the disjoint one. Three shared words out of four on unit-norm vectors leave
+     * a cosine distance near 0.25, hence the absolute bound alongside the comparison.
+     */
+    @Test
+    public void testTextsSharingWordsAreCloserThanTextsSharingNone()
+    {
+        double overlapping = (Double) computeScalar(
+                "SELECT cosine_distance("
+                        + "to_vector_double('alpha beta gamma delta', 4096, 'word'), "
+                        + "to_vector_double('zeta alpha beta gamma', 4096, 'word'))");
+        double disjoint = (Double) computeScalar(
+                "SELECT cosine_distance("
+                        + "to_vector_double('alpha beta gamma delta', 4096, 'word'), "
+                        + "to_vector_double('north south east west', 4096, 'word'))");
+        assertThat(overlapping).isLessThan(disjoint);
+        assertThat(overlapping).isCloseTo(0.25, within(1e-9));
+        assertThat(disjoint).isCloseTo(1.0, within(1e-9));
+    }
+
     @Test
     public void testDifferentTextsAreFurtherApartThanIdenticalOnes()
     {
