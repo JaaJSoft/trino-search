@@ -29,6 +29,37 @@ memory read per row.
 > `array(double)` column, an explicit `CAST` or `DOUBLE 'x'` literals all keep the engine's
 > native implementation.
 
+### Text embeddings
+
+```sql
+to_vector_real(text, dimension, algorithm)   -> array(real)
+to_vector_double(text, dimension, algorithm) -> array(double)
+```
+
+Embeds text by feature hashing: every token is hashed to an index and a sign, and contributes one
+unit there. No model, no vocabulary and no external call, so the vector of a row depends on that
+row alone and is stable across servers and restarts.
+
+`algorithm` is one of `'word'`, `'char_3gram'`, `'char_4gram'` or `'char_5gram'`. `'word'` splits
+on non-alphanumeric characters; the n-gram variants slide a window of that many characters, which
+tolerates typos and handles languages that do not separate words with spaces. `dimension` must be
+between 1 and 65536.
+
+The result is always of unit norm, so cosine distance and euclidean distance rank identically.
+Text containing no token returns the zero vector rather than raising, so a single empty row cannot
+fail a scan. `to_vector_fp32` and `to_vector_fp64` are aliases of the `real` and `double` forms.
+
+Feature hashing captures token overlap, not meaning: two texts sharing no word are far apart even
+if they say the same thing. It suits deduplication, tag and identifier matching, and near-duplicate
+detection, and it is not a substitute for a learned embedding model.
+
+```sql
+-- three nearest titles per category, embedded on the fly
+SELECT category, knn_agg(id, to_vector_double(title, 256, 'word'), to_vector_double('trino query engine', 256, 'word'), 3, 'cosine')
+FROM documents
+GROUP BY category;
+```
+
 ### Aggregation
 
 ```sql
