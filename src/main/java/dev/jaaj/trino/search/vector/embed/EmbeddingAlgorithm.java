@@ -15,6 +15,7 @@ package dev.jaaj.trino.search.vector.embed;
 
 import io.airlift.slice.Slice;
 import io.airlift.slice.SliceUtf8;
+import io.airlift.slice.Slices;
 import io.trino.spi.TrinoException;
 
 import java.util.Locale;
@@ -70,10 +71,12 @@ enum EmbeddingAlgorithm
     };
 
     private final String sqlName;
+    private final Slice sqlNameUtf8;
 
     EmbeddingAlgorithm(String sqlName)
     {
         this.sqlName = sqlName;
+        this.sqlNameUtf8 = Slices.utf8Slice(sqlName);
     }
 
     /**
@@ -89,8 +92,19 @@ enum EmbeddingAlgorithm
         return sqlName;
     }
 
+    /**
+     * The engine hands the algorithm name over once per row for an argument that is a constant in
+     * every real query, so the canonical spelling is recognised by comparing the raw bytes. Any
+     * other spelling falls through to the decoding path and pays for the two string allocations
+     * there.
+     */
     static EmbeddingAlgorithm fromName(Slice name)
     {
+        for (EmbeddingAlgorithm algorithm : values()) {
+            if (algorithm.sqlNameUtf8.equals(name)) {
+                return algorithm;
+            }
+        }
         return fromName(name.toStringUtf8());
     }
 

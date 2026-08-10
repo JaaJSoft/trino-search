@@ -81,17 +81,28 @@ public class TestEmbeddingAlgorithm
         assertThat(tokens(EmbeddingAlgorithm.WORD, "")).isEmpty();
     }
 
+    /**
+     * The raw-bytes overload answers the canonical spelling without decoding and leaves every
+     * other spelling to the decoding path, so both have to be exercised through it.
+     */
     @Test
     public void testFromNameIsCaseInsensitive()
     {
         assertThat(EmbeddingAlgorithm.fromName("WORD")).isEqualTo(EmbeddingAlgorithm.WORD);
         assertThat(EmbeddingAlgorithm.fromName(Slices.utf8Slice("word"))).isEqualTo(EmbeddingAlgorithm.WORD);
+        assertThat(EmbeddingAlgorithm.fromName(Slices.utf8Slice("WORD"))).isEqualTo(EmbeddingAlgorithm.WORD);
+        assertThat(EmbeddingAlgorithm.fromName(Slices.utf8Slice("Char_3Gram")))
+                .isEqualTo(EmbeddingAlgorithm.CHAR_3GRAM);
     }
 
     @Test
     public void testFromNameRejectsUnknownNameAndListsTheValidOnes()
     {
         assertThatThrownBy(() -> EmbeddingAlgorithm.fromName("bag_of_words"))
+                .isInstanceOf(TrinoException.class)
+                .hasMessageContaining("Unknown embedding algorithm 'bag_of_words'")
+                .hasMessageContaining("word");
+        assertThatThrownBy(() -> EmbeddingAlgorithm.fromName(Slices.utf8Slice("bag_of_words")))
                 .isInstanceOf(TrinoException.class)
                 .hasMessageContaining("Unknown embedding algorithm 'bag_of_words'")
                 .hasMessageContaining("word");
@@ -140,6 +151,7 @@ public class TestEmbeddingAlgorithm
     {
         for (EmbeddingAlgorithm algorithm : EmbeddingAlgorithm.values()) {
             assertThat(EmbeddingAlgorithm.fromName(algorithm.sqlName())).isEqualTo(algorithm);
+            assertThat(EmbeddingAlgorithm.fromName(Slices.utf8Slice(algorithm.sqlName()))).isEqualTo(algorithm);
         }
     }
 }
