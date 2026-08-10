@@ -78,8 +78,9 @@ enum EmbeddingAlgorithm
 
     /**
      * @param text lowercased UTF-8. The walk assumes well-formed input, which holds because the
-     *         only caller passes the output of {@link SliceUtf8#toLowerCase}, itself always
-     *         well-formed.
+     *         only caller runs the text through {@link SliceUtf8#fixInvalidUtf8} first.
+     *         {@link SliceUtf8#toLowerCase} does not establish it on its own: it translates the
+     *         code points it recognises and copies every other byte through unchanged.
      */
     abstract void forEachToken(Slice text, TokenSink sink);
 
