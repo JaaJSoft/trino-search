@@ -64,11 +64,12 @@ final class NormalizedVectorBlocks
             for (int part = 0; part < NARROWING_PARTS; part++) {
                 DoubleVector scaled = DoubleVector.fromArray(DOUBLE_SPECIES, accumulator, i + part * DOUBLE_SPECIES.length())
                         .mul(scale);
-                // A contracting conversion fills one block of the output and zeroes the rest, and
-                // the part number that steers a block to lane offset part*DOUBLE_SPECIES.length()
-                // is its negation. The blocks are then reassembled bitwise on the int view rather
-                // than with FIRST_NONZERO on the floats, which would read a negative zero as empty
-                // and hand back a positive one.
+                // A contracting conversion fills one block of the output and zeroes every lane
+                // outside it, and the part number steering a block to lane offset
+                // part*DOUBLE_SPECIES.length() is its negation. The blocks are therefore disjoint,
+                // which makes a bitwise or on the int view the direct way to combine them: it is
+                // exact on the bits and needs no comparison, unlike FIRST_NONZERO, which has no
+                // intrinsic opcode and lowers to a compare plus a blend.
                 narrowed = narrowed.or(((FloatVector) scaled.convertShape(VectorOperators.D2F, FLOAT_SPECIES, -part)).reinterpretAsInts());
             }
             narrowed.intoArray(bits, i);

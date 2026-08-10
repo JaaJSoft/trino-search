@@ -108,10 +108,10 @@ public class TestNormalizedVectorBlocks
      * Every component is the accumulator scaled by the same factor, at lengths that fall on both
      * sides of a vector register: below one, exactly one, and one past a whole number of them.
      * <p>
-     * Nothing here is vectorized, but this is the loop shape a vectorized form has, and its
-     * scalar tail is where an off-by-one lives. Task 6 rewrites these loops with the Vector API
-     * and adds no test of its own, because a bit-for-bit identical optimization has no failing
-     * test to write. This is the coverage that makes that change a refactor under test.
+     * A vector loop over these arrays handles whole registers and leaves the remainder to a
+     * scalar tail, and the boundary between the two is where an off-by-one lives. Comparing every
+     * component exactly, at lengths straddling every plausible register width, is what keeps a
+     * component from being dropped, doubled or written to the wrong half.
      */
     @Test
     public void testEveryComponentIsTheScaledAccumulatorAtEveryLength()
