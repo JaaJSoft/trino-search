@@ -112,6 +112,13 @@ public class TestNormalizedVectorBlocks
      * scalar tail, and the boundary between the two is where an off-by-one lives. Comparing every
      * component exactly, at lengths straddling every plausible register width, is what keeps a
      * component from being dropped, doubled or written to the wrong half.
+     * <p>
+     * The per-component comparison takes its scale from {@code reciprocalNorm} and so says nothing
+     * about the norm itself: a norm that skipped components would still scale every component by
+     * the same wrong factor and pass. The unit-norm assertion is what closes that, because it
+     * recomputes the norm from the block. It needs an accumulator that is non-zero near its end to
+     * be worth anything, which is why it lives here on dense data rather than beside a query test,
+     * where a hashed text leaves almost every component zero and a dropped tail invisible.
      */
     @Test
     public void testEveryComponentIsTheScaledAccumulatorAtEveryLength()
@@ -131,6 +138,17 @@ public class TestNormalizedVectorBlocks
                 assertThat(Float.intBitsToFloat(((IntArrayBlock) realBlock).getInt(i)))
                         .as("real component %d of %d", i, length)
                         .isEqualTo((float) (accumulator[i] * scale));
+            }
+
+            // The empty accumulator is excluded rather than special-cased: its norm is legitimately
+            // zero, since there is no component to scale.
+            if (length > 0) {
+                assertThat(normOfDoubleBlock(doubleBlock))
+                        .as("double norm at %d", length)
+                        .isCloseTo(1.0, within(1e-12));
+                assertThat(normOfRealBlock(realBlock))
+                        .as("real norm at %d", length)
+                        .isCloseTo(1.0, within(1e-6));
             }
         }
     }
