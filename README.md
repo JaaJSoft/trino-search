@@ -45,9 +45,13 @@ on non-alphanumeric characters; the n-gram variants slide a window of that many 
 tolerates typos and handles languages that do not separate words with spaces. `dimension` must be
 between 1 and 65536.
 
-The result is always of unit norm, so cosine distance and euclidean distance rank identically.
-Text containing no token returns the zero vector rather than raising, so a single empty row cannot
-fail a scan. `to_vector_fp32` and `to_vector_fp64` are aliases of the `real` and `double` forms.
+The result has unit norm, so euclidean and cosine distance rank identically, with one exception:
+text containing no token returns the zero vector rather than raising, so a single empty row
+cannot fail a scan by itself. That zero vector still works with euclidean distance, but a zero
+vector has no direction for cosine to compare, so passing it to `cosine_similarity`,
+`cosine_distance` or `knn_agg` with the `'cosine'` metric raises "Vector magnitude cannot be
+zero". Filter out empty text, or use euclidean distance, if the input can be empty.
+`to_vector_fp32` and `to_vector_fp64` are aliases of the `real` and `double` forms.
 
 Feature hashing captures token overlap, not meaning: two texts sharing no word are far apart even
 if they say the same thing. It suits deduplication, tag and identifier matching, and near-duplicate
