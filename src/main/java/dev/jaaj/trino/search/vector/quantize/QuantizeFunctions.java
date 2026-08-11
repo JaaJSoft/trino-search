@@ -64,12 +64,12 @@ public final class QuantizeFunctions
 
     private static Block quantizeToTinyint(Block vector, SqlRow boundsRow, VectorReader reader)
     {
-        if (vector.hasNull()) {
-            return null;
-        }
         QuantizationBounds bounds = QuantizationBounds.of(boundsRow);
         int length = vector.getPositionCount();
         bounds.checkDimension(length);
+        if (vector.hasNull()) {
+            return null;
+        }
 
         BlockBuilder output = TINYINT.createFixedSizeBlockBuilder(length);
         for (int i = 0; i < length; i++) {
@@ -110,12 +110,12 @@ public final class QuantizeFunctions
      */
     private static Slice quantizeToVarbinary(Block vector, SqlRow boundsRow, VectorReader reader)
     {
-        if (vector.hasNull()) {
-            return null;
-        }
         QuantizationBounds bounds = QuantizationBounds.of(boundsRow);
         int length = vector.getPositionCount();
         bounds.checkDimension(length);
+        if (vector.hasNull()) {
+            return null;
+        }
         return BinaryCodes.pack(length, i -> reader.read(vector, i) >= bounds.offset(i));
     }
 }

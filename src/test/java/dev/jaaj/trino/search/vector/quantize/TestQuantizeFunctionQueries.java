@@ -100,6 +100,22 @@ public class TestQuantizeFunctionQueries
     }
 
     /**
+     * A vector that is wrong in both ways fails on the dimension rather than returning null: the
+     * distance functions and the whole float family check the length before they look at the
+     * components, and an order that varied by function is one a user cannot predict.
+     */
+    @Test
+    public void testDimensionIsCheckedBeforeNullElements()
+    {
+        assertQueryFails(
+                "SELECT quantize_vector_tinyint(CAST(ARRAY[1.0, NULL, 3.0] AS array(double)), " + UNIT_BOUNDS + ")",
+                ".*3 components but the quantisation bounds were fitted on 2.*");
+        assertQueryFails(
+                "SELECT quantize_vector_varbinary(CAST(ARRAY[1.0, NULL, 3.0] AS array(double)), " + UNIT_BOUNDS + ")",
+                ".*3 components but the quantisation bounds were fitted on 2.*");
+    }
+
+    /**
      * The whole pipeline in one statement: fit, encode, and check that the midpoint of the fitted
      * range lands on code zero.
      */
