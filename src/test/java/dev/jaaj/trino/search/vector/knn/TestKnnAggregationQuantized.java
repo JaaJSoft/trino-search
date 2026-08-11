@@ -118,6 +118,98 @@ public class TestKnnAggregationQuantized
                 ".*The arguments must have the same length.*");
     }
 
+    /**
+     * Compared with {@code IS NULL} rather than against a null literal: H2 runs the expected side
+     * of {@code assertQuery} and does not parse Trino's type constructors, so the comparison is
+     * made inside Trino and only a boolean crosses over. {@code TestKnnAggregation} settles the
+     * same problem the same way.
+     */
+    @Test
+    public void testEmptyGroupGivesNull()
+    {
+        assertQuery(
+                """
+                SELECT knn_agg(id, v, ARRAY[CAST(0 AS TINYINT)], %s, 2, 'euclidean') IS NULL
+                FROM (VALUES (1, ARRAY[CAST(1 AS TINYINT)])) AS t(id, v)
+                WHERE id = 999
+                """.formatted(UNIT_BOUNDS),
+                "SELECT true");
+    }
+
+    @Test
+    public void testNullVectorRowsAreIgnored()
+    {
+        assertQuery(
+                """
+                SELECT cardinality(n), n[1][1]
+                FROM (
+                    SELECT knn_agg(id, v, ARRAY[CAST(0 AS TINYINT)], %s, 2, 'euclidean') AS n
+                    FROM (VALUES
+                        (1, ARRAY[CAST(9 AS TINYINT)]),
+                        (2, CAST(NULL AS array(tinyint))),
+                        (3, ARRAY[CAST(1 AS TINYINT)])) AS t(id, v)
+                )
+                """.formatted(UNIT_BOUNDS),
+                "SELECT 2, 3");
+    }
+
+    @Test
+    public void testNullKeysAreKept()
+    {
+        assertQuery(
+                """
+                SELECT cardinality(n)
+                FROM (
+                    SELECT knn_agg(id, v, ARRAY[CAST(0 AS TINYINT)], %s, 2, 'euclidean') AS n
+                    FROM (VALUES
+                        (CAST(NULL AS varchar), ARRAY[CAST(1 AS TINYINT)]),
+                        ('b', ARRAY[CAST(2 AS TINYINT)])) AS t(id, v)
+                )
+                """.formatted(UNIT_BOUNDS),
+                "SELECT 2");
+    }
+
+    /**
+     * Distinct from {@link #testNullVectorRowsAreIgnored}, whose {@code CAST(NULL AS
+     * array(tinyint))} is a null argument the engine skips before the input function runs. Here the
+     * array itself is not null, only one of its codes is, so the input function does run and its
+     * own null check is what drops the row.
+     */
+    @Test
+    public void testRowWithNullVectorElementIsIgnored()
+    {
+        assertQuery(
+                """
+                SELECT cardinality(n), n[1][1]
+                FROM (
+                    SELECT knn_agg(id, v, ARRAY[CAST(0 AS TINYINT), CAST(0 AS TINYINT)], %s, 2, 'euclidean') AS n
+                    FROM (VALUES
+                        (1, ARRAY[CAST(9 AS TINYINT), CAST(0 AS TINYINT)]),
+                        (2, ARRAY[CAST(1 AS TINYINT), CAST(NULL AS TINYINT)]),
+                        (3, ARRAY[CAST(1 AS TINYINT), CAST(0 AS TINYINT)])) AS t(id, v)
+                )
+                """.formatted(TWO_DIMENSION_BOUNDS),
+                "SELECT 2, 3");
+    }
+
+    /**
+     * The query vector is the same value on every row, so a null code in it drops every candidate:
+     * the heap is created and stays empty, and an empty heap is written as SQL null. The same
+     * contract as the float overloads.
+     */
+    @Test
+    public void testNullElementInQueryVectorNullsTheWholeGroup()
+    {
+        assertQuery(
+                """
+                SELECT knn_agg(id, v, ARRAY[CAST(0 AS TINYINT), CAST(NULL AS TINYINT)], %s, 2, 'euclidean') IS NULL
+                FROM (VALUES
+                    (1, ARRAY[CAST(1 AS TINYINT), CAST(0 AS TINYINT)]),
+                    (2, ARRAY[CAST(2 AS TINYINT), CAST(0 AS TINYINT)])) AS t(id, v)
+                """.formatted(TWO_DIMENSION_BOUNDS),
+                "SELECT true");
+    }
+
     @Test
     public void testBinaryKnnReturnsTheNearestKeysNearestFirst()
     {
@@ -157,6 +249,59 @@ public class TestKnnAggregationQuantized
                     """.formatted(metric),
                     "SELECT 2, 3, 4");
         }
+    }
+
+    @Test
+    public void testBinaryEmptyGroupGivesNull()
+    {
+        assertQuery(
+                """
+                SELECT knn_agg(id, v, from_hex('00000004FF'), 2, 'euclidean') IS NULL
+                FROM (VALUES (1, from_hex('0000000400'))) AS t(id, v)
+                WHERE id = 999
+                """,
+                "SELECT true");
+    }
+
+    /**
+     * The binary overload takes {@code varbinary} operands rather than arrays, so a null vector is
+     * a null argument and there is no such thing as a null element inside one: the engine skips a
+     * row whose non-nullable argument is null before the input function runs, which is why this
+     * class has no binary equivalent of {@code testRowWithNullVectorElementIsIgnored} or of
+     * {@code testNullElementInQueryVectorNullsTheWholeGroup}. A null query vector, by the same
+     * rule, skips every row and leaves the group empty.
+     */
+    @Test
+    public void testBinaryNullVectorRowsAreIgnored()
+    {
+        assertQuery(
+                """
+                SELECT cardinality(n), n[1][1]
+                FROM (
+                    SELECT knn_agg(id, v, from_hex('00000004FF'), 2, 'euclidean') AS n
+                    FROM (VALUES
+                        (1, from_hex('0000000400')),
+                        (2, CAST(NULL AS varbinary)),
+                        (3, from_hex('000000040F'))) AS t(id, v)
+                )
+                """,
+                "SELECT 2, 3");
+    }
+
+    @Test
+    public void testBinaryNullKeysAreKept()
+    {
+        assertQuery(
+                """
+                SELECT cardinality(n)
+                FROM (
+                    SELECT knn_agg(id, v, from_hex('00000004FF'), 2, 'euclidean') AS n
+                    FROM (VALUES
+                        (CAST(NULL AS varchar), from_hex('000000040F')),
+                        ('b', from_hex('0000000403'))) AS t(id, v)
+                )
+                """,
+                "SELECT 2");
     }
 
     @Test
