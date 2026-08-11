@@ -15,8 +15,10 @@ package dev.jaaj.trino.search.vector.quantize;
 
 import io.trino.spi.block.Block;
 import io.trino.spi.block.ByteArrayBlock;
+import io.trino.spi.block.DictionaryBlock;
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
 import java.util.Optional;
 import java.util.SplittableRandom;
 
@@ -197,5 +199,74 @@ public class TestQuantizedVectorMath
         }
         assertThat(QuantizedVectorMath.dotProduct(codes(left), codes(right), bounds))
                 .isCloseTo(referenceDotProduct(codes(left), codes(right), bounds), within(1e-9));
+    }
+
+    /**
+     * The fast path reads the block's backing array directly, so it may only run on a block that
+     * stores its components contiguously and in order. A dictionary block maps position i somewhere
+     * else in a shared array, so indexing its raw values would compute a distance between vectors
+     * nobody asked for.
+     */
+    @Test
+    public void testDictionaryBlocksTakeTheGeneralPath()
+    {
+        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, new double[] {1, 1});
+        Block underlying = codes(0, 0, 3, 4);
+        Block first = DictionaryBlock.create(2, underlying, new int[] {0, 1});
+        Block second = DictionaryBlock.create(2, underlying, new int[] {2, 3});
+        assertThat(QuantizedVectorMath.euclideanSquared(first, second, bounds)).isEqualTo(25.0);
+    }
+
+    /**
+     * Dimensions either side of a vector register's width are where a loop bound that forgets its
+     * tail, or one that processes it twice, shows up.
+     */
+    @Test
+    public void testVectorisedAndTailLengthsAgreeWithTheReference()
+    {
+        SplittableRandom random = new SplittableRandom(101);
+        for (int dimension : new int[] {1, 7, 15, 16, 17, 31, 32, 33, 63, 64, 65, 128, 768}) {
+            double[] offsets = new double[dimension];
+            double[] scales = new double[dimension];
+            Arrays.fill(scales, 0.25);
+            QuantizationBounds bounds = QuantizationBounds.forTesting(offsets, scales);
+
+            int[] left = new int[dimension];
+            int[] right = new int[dimension];
+            for (int i = 0; i < dimension; i++) {
+                left[i] = random.nextInt(-128, 128);
+                right[i] = random.nextInt(-128, 128);
+            }
+            Block first = codes(left);
+            Block second = codes(right);
+            assertThat(QuantizedVectorMath.euclideanSquared(first, second, bounds))
+                    .as("dimension %s", dimension)
+                    .isCloseTo(referenceEuclideanSquared(first, second, bounds), within(1e-9));
+        }
+    }
+
+    /**
+     * The scales vary per dimension, so a kernel that hoisted one scale out of the loop would pass
+     * every uniform-scale test above and be wrong here.
+     */
+    @Test
+    public void testVectorisedPathHonoursPerDimensionScales()
+    {
+        int dimension = 128;
+        double[] offsets = new double[dimension];
+        double[] scales = new double[dimension];
+        for (int i = 0; i < dimension; i++) {
+            scales[i] = 1.0 / (i + 1);
+        }
+        QuantizationBounds bounds = QuantizationBounds.forTesting(offsets, scales);
+
+        int[] left = new int[dimension];
+        int[] right = new int[dimension];
+        Arrays.fill(left, 10);
+        Arrays.fill(right, 4);
+        Block first = codes(left);
+        Block second = codes(right);
+        assertThat(QuantizedVectorMath.euclideanSquared(first, second, bounds))
+                .isCloseTo(referenceEuclideanSquared(first, second, bounds), within(1e-9));
     }
 }
