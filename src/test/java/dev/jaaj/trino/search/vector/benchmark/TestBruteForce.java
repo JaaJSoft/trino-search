@@ -69,4 +69,24 @@ public class TestBruteForce
         double[] distances = BruteForce.sortedDistances(new double[] {1.0}, base, BruteForce.Distance.DOT_PRODUCT);
         assertThat(distances).containsExactly(3.0, 2.0, 1.0);
     }
+
+    @Test
+    public void testSortedKeysReturnsTheNearestFirst()
+    {
+        double[][] base = {{10.0}, {1.0}, {5.0}};
+        assertThat(BruteForce.sortedKeys(new double[] {0.0}, base, BruteForce.Distance.EUCLIDEAN, 2))
+                .containsExactly(1, 2);
+    }
+
+    /**
+     * A similarity ranks the other way round, and a sort that ignored the direction would look
+     * right on every distance and be exactly backwards here.
+     */
+    @Test
+    public void testSortedKeysRanksASimilarityInReverse()
+    {
+        double[][] base = {{1.0}, {10.0}, {5.0}};
+        assertThat(BruteForce.sortedKeys(new double[] {1.0}, base, BruteForce.Distance.DOT_PRODUCT, 2))
+                .containsExactly(1, 2);
+    }
 }

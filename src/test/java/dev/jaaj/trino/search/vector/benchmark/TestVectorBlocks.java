@@ -14,11 +14,15 @@
 package dev.jaaj.trino.search.vector.benchmark;
 
 import dev.jaaj.trino.search.vector.Metric;
+import dev.jaaj.trino.search.vector.quantize.BinaryCodes;
+import dev.jaaj.trino.search.vector.quantize.QuantizationBounds;
+import io.airlift.slice.Slice;
 import io.trino.spi.block.Block;
 import org.junit.jupiter.api.Test;
 
 import static dev.jaaj.trino.search.vector.VectorReader.DOUBLE_READER;
 import static dev.jaaj.trino.search.vector.VectorReader.REAL_READER;
+import static io.trino.spi.type.TinyintType.TINYINT;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 
@@ -69,5 +73,34 @@ public class TestVectorBlocks
         for (int i = 0; i < values.length; i++) {
             assertThat(rounded[i]).isEqualTo(REAL_READER.read(block, i));
         }
+    }
+
+    @Test
+    public void testFittedBoundsSpanTheDataAndCentreTheCodes()
+    {
+        double[][] vectors = {{-1.0, 5.0}, {3.0, 5.0}};
+        QuantizationBounds bounds = VectorBlocks.fitBounds(vectors);
+        assertThat(bounds.offset(0)).isEqualTo(1.0);
+        assertThat(bounds.scale(0)).isEqualTo(4.0 / 255.0);
+        assertThat(bounds.scale(1)).isEqualTo(0.0);
+    }
+
+    @Test
+    public void testInt8VectorEncodesAgainstTheBounds()
+    {
+        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0.0}, new double[] {1.0});
+        Block codes = VectorBlocks.int8Vector(new double[] {7.0}, bounds);
+        assertThat(codes.getPositionCount()).isEqualTo(1);
+        assertThat(TINYINT.getByte(codes, 0)).isEqualTo((byte) 7);
+    }
+
+    @Test
+    public void testBinaryVectorSetsABitPerComponentAboveTheMidpoint()
+    {
+        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0.0, 0.0}, new double[] {1.0, 1.0});
+        Slice codes = VectorBlocks.binaryVector(new double[] {1.0, -1.0}, bounds);
+        assertThat(BinaryCodes.dimension(codes)).isEqualTo(2);
+        assertThat(BinaryCodes.hamming(codes, VectorBlocks.binaryVector(new double[] {1.0, 1.0}, bounds)))
+                .isEqualTo(1);
     }
 }
