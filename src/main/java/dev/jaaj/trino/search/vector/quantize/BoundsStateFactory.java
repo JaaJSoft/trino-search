@@ -137,14 +137,12 @@ public final class BoundsStateFactory
         }
 
         @Override
-        @SuppressFBWarnings(value = "EI_EXPOSE_REP", justification = "See SingleBoundsState.getMinimums.")
         public double[] getMinimums()
         {
             return minimums[groupId];
         }
 
         @Override
-        @SuppressFBWarnings(value = "EI_EXPOSE_REP", justification = "See SingleBoundsState.getMinimums.")
         public double[] getMaximums()
         {
             return maximums[groupId];
