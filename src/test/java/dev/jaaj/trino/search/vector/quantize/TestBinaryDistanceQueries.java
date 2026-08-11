@@ -91,6 +91,18 @@ public class TestBinaryDistanceQueries
                 ".*same length.*");
     }
 
+    /**
+     * Cosine is the one metric that reads a dimension of its own before comparing the two, so it is
+     * the one that can report a mismatch as something else.
+     */
+    @Test
+    public void testMismatchedDimensionsFailForCosineToo()
+    {
+        assertQueryFails(
+                "SELECT cosine_similarity(" + ALL_ONES + ", " + WIDER + ")",
+                ".*same length.*");
+    }
+
     @Test
     public void testMalformedHeaderFails()
     {

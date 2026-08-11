@@ -58,10 +58,14 @@ public final class BinaryVectorMath
      */
     public static double cosineSimilarity(Slice first, Slice second)
     {
+        // The dot product first, so that two codes of different dimension are reported as the
+        // length mismatch they are: reading this vector's own dimension before comparing the two
+        // would blame the magnitude for an argument that has one.
+        double dotProduct = dotProduct(first, second);
         int dimension = BinaryCodes.dimension(first);
         if (dimension == 0) {
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Vector magnitude cannot be zero");
         }
-        return dotProduct(first, second) / dimension;
+        return dotProduct / dimension;
     }
 }

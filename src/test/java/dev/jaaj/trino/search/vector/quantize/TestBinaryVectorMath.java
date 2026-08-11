@@ -14,6 +14,7 @@
 package dev.jaaj.trino.search.vector.quantize;
 
 import io.airlift.slice.Slice;
+import io.trino.spi.TrinoException;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
@@ -22,6 +23,7 @@ import java.util.SplittableRandom;
 import java.util.function.ToDoubleFunction;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 
 public class TestBinaryVectorMath
@@ -104,6 +106,30 @@ public class TestBinaryVectorMath
             assertThat(BinaryVectorMath.cosineSimilarity(left, right)).as("d=%s cosine", dimension)
                     .isCloseTo(dot / dimension, within(1e-12));
         }
+    }
+
+    /**
+     * Cosine reads its own dimension to divide by it, which it must not do before the two operands
+     * have been compared: a mismatch is a mismatch, not a vector without a magnitude, and every
+     * other binary metric reports it as one.
+     */
+    @Test
+    public void testCosineReportsALengthMismatchRatherThanAZeroMagnitude()
+    {
+        Slice first = pack(new boolean[] {true, false, true, true});
+        Slice second = pack(new boolean[] {true, false});
+        assertThatThrownBy(() -> BinaryVectorMath.cosineSimilarity(first, second))
+                .isInstanceOf(TrinoException.class)
+                .hasMessageContaining("same length");
+    }
+
+    @Test
+    public void testAZeroDimensionalVectorHasNoMagnitude()
+    {
+        Slice empty = pack(new boolean[0]);
+        assertThatThrownBy(() -> BinaryVectorMath.cosineSimilarity(empty, empty))
+                .isInstanceOf(TrinoException.class)
+                .hasMessageContaining("magnitude");
     }
 
     /**
