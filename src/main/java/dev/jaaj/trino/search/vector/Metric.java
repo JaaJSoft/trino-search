@@ -46,6 +46,12 @@ public enum Metric
             return Math.sqrt(VectorMath.euclideanSquaredBounded(first, second, reader, limit * limit));
         }
 
+        @Override
+        public double computeQuantized(Block first, Block second, QuantizationBounds bounds)
+        {
+            return QuantizedVectorMath.euclidean(first, second, bounds);
+        }
+
         /**
          * The accumulation is squared while the limit is a distance, so the limit is squared to
          * meet it, exactly as {@link #computeBounded} does for the float representation.
@@ -76,6 +82,12 @@ public enum Metric
         }
 
         @Override
+        public double computeQuantized(Block first, Block second, QuantizationBounds bounds)
+        {
+            return QuantizedVectorMath.euclideanSquared(first, second, bounds);
+        }
+
+        @Override
         public double computeQuantizedBounded(Block first, Block second, QuantizationBounds bounds, double limit)
         {
             return QuantizedVectorMath.euclideanSquaredBounded(first, second, bounds, limit);
@@ -95,7 +107,7 @@ public enum Metric
         }
 
         @Override
-        public double computeQuantizedBounded(Block first, Block second, QuantizationBounds bounds, double limit)
+        public double computeQuantized(Block first, Block second, QuantizationBounds bounds)
         {
             return 1.0 - QuantizedVectorMath.cosineSimilarity(first, second, bounds);
         }
@@ -114,7 +126,7 @@ public enum Metric
         }
 
         @Override
-        public double computeQuantizedBounded(Block first, Block second, QuantizationBounds bounds, double limit)
+        public double computeQuantized(Block first, Block second, QuantizationBounds bounds)
         {
             return QuantizedVectorMath.dotProduct(first, second, bounds);
         }
@@ -133,7 +145,7 @@ public enum Metric
         }
 
         @Override
-        public double computeQuantizedBounded(Block first, Block second, QuantizationBounds bounds, double limit)
+        public double computeQuantized(Block first, Block second, QuantizationBounds bounds)
         {
             return QuantizedVectorMath.manhattan(first, second, bounds);
         }
@@ -159,11 +171,9 @@ public enum Metric
     public abstract double compute(Block first, Block second, VectorReader reader);
 
     /**
-     * The metric over two vectors of one-byte codes fitted against the same bounds. The limit has
-     * the meaning {@link #computeBounded} gives it: a metric accumulated from non-negative terms
-     * may return any value above it once the components read so far already put it there.
+     * The metric over two vectors of one-byte codes fitted against the same bounds.
      */
-    public abstract double computeQuantizedBounded(Block first, Block second, QuantizationBounds bounds, double limit);
+    public abstract double computeQuantized(Block first, Block second, QuantizationBounds bounds);
 
     /**
      * The metric over two one-bit-per-component vectors. There is no bounded form: every one of
@@ -186,6 +196,20 @@ public enum Metric
     public double computeBounded(Block first, Block second, VectorReader reader, double limit)
     {
         return compute(first, second, reader);
+    }
+
+    /**
+     * The bounded form of {@link #computeQuantized}, with the meaning {@link #computeBounded} gives
+     * a limit: a metric accumulated from non-negative terms may return any value above it once the
+     * components read so far already put it there.
+     * <p>
+     * The metrics whose terms are signed cannot settle the question early, for the reason
+     * {@link #computeBounded} states, so they compute the whole thing and ignore the limit, which
+     * is what this default does.
+     */
+    public double computeQuantizedBounded(Block first, Block second, QuantizationBounds bounds, double limit)
+    {
+        return computeQuantized(first, second, bounds);
     }
 
     public String sqlName()
