@@ -14,6 +14,7 @@
 package dev.jaaj.trino.search.vector.quantize;
 
 import dev.jaaj.trino.search.vector.VectorReader;
+import io.airlift.slice.Slice;
 import io.trino.spi.block.Block;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.block.SqlRow;
@@ -21,6 +22,7 @@ import io.trino.spi.function.Description;
 import io.trino.spi.function.ScalarFunction;
 import io.trino.spi.function.SqlNullable;
 import io.trino.spi.function.SqlType;
+import io.trino.spi.type.StandardTypes;
 
 import static dev.jaaj.trino.search.vector.VectorReader.DOUBLE_READER;
 import static dev.jaaj.trino.search.vector.VectorReader.REAL_READER;
@@ -74,5 +76,46 @@ public final class QuantizeFunctions
             TINYINT.writeByte(output, bounds.encode(i, reader.read(vector, i)));
         }
         return output.build();
+    }
+
+    @Description("Quantises a vector to one bit per component against fitted bounds")
+    @ScalarFunction(
+            value = "quantize_vector_varbinary",
+            alias = {"quantize_vector_binary", "quantize_vector_int1"})
+    @SqlType(StandardTypes.VARBINARY)
+    @SqlNullable
+    public static Slice quantizeToVarbinary(
+            @SqlType("array(double)") Block vector,
+            @SqlType(QuantizationBounds.BOUNDS_TYPE_SIGNATURE) SqlRow bounds)
+    {
+        return quantizeToVarbinary(vector, bounds, DOUBLE_READER);
+    }
+
+    @Description("Quantises a vector to one bit per component against fitted bounds")
+    @ScalarFunction(
+            value = "quantize_vector_varbinary",
+            alias = {"quantize_vector_binary", "quantize_vector_int1"})
+    @SqlType(StandardTypes.VARBINARY)
+    @SqlNullable
+    public static Slice quantizeRealToVarbinary(
+            @SqlType("array(real)") Block vector,
+            @SqlType(QuantizationBounds.BOUNDS_TYPE_SIGNATURE) SqlRow bounds)
+    {
+        return quantizeToVarbinary(vector, bounds, REAL_READER);
+    }
+
+    /**
+     * Sign quantisation about each dimension's own midpoint, which is what keeps the codes centred
+     * instead of dominated by whichever side of zero the embedding happens to sit on.
+     */
+    private static Slice quantizeToVarbinary(Block vector, SqlRow boundsRow, VectorReader reader)
+    {
+        if (vector.hasNull()) {
+            return null;
+        }
+        QuantizationBounds bounds = QuantizationBounds.of(boundsRow);
+        int length = vector.getPositionCount();
+        bounds.checkDimension(length);
+        return BinaryCodes.pack(length, i -> reader.read(vector, i) >= bounds.offset(i));
     }
 }

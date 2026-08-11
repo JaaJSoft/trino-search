@@ -116,4 +116,33 @@ public class TestQuantizeFunctionQueries
                 """,
                 "SELECT true");
     }
+
+    /**
+     * The expected hex is the four header bytes {@code 00000002} for dimension 2, then payload byte
+     * {@code 01}: component 0 is at or above its midpoint and component 1 is not.
+     */
+    @Test
+    public void testQuantizeToVarbinarySetsABitPerComponentAboveTheMidpoint()
+    {
+        assertQuery(
+                "SELECT to_hex(quantize_vector_varbinary(CAST(ARRAY[1.0, -1.0] AS array(double)), " + UNIT_BOUNDS + "))",
+                "SELECT '0000000201'");
+    }
+
+    @Test
+    public void testBinaryAndInt1AliasesResolveToTheSameFunction()
+    {
+        assertQuery(
+                "SELECT quantize_vector_binary(CAST(ARRAY[1.0, -1.0] AS array(double)), " + UNIT_BOUNDS + ") "
+                        + "= quantize_vector_int1(CAST(ARRAY[1.0, -1.0] AS array(double)), " + UNIT_BOUNDS + ")",
+                "SELECT true");
+    }
+
+    @Test
+    public void testVarbinaryNullElementYieldsNull()
+    {
+        assertQuery(
+                "SELECT quantize_vector_varbinary(CAST(ARRAY[1.0, NULL] AS array(double)), " + UNIT_BOUNDS + ")",
+                "SELECT CAST(NULL AS varbinary)");
+    }
 }
