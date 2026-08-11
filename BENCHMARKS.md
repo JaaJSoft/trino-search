@@ -21,6 +21,11 @@ How to read this:
 - Absolute nanoseconds are comparable only between rows sharing the same `Machine` label.
 - A drift of up to 20 percent in absolutes, or up to 15 percent in a ratio, is noise rather than a
   change.
+- Ratios are comparable down a column, not across columns. A quantised kernel is several times
+  cheaper than a float one while the per-row bookkeeping is unchanged, so an int8 or int1 ratio is
+  far larger than a double one without anything having regressed: the denominator shrank. Read a
+  quantised column's ratio as how completely the per-row path now dominates, which is the number
+  that says when shrinking the representation further has stopped buying anything.
 
 To record a row, from a build with Java 25:
 
@@ -44,10 +49,11 @@ scroll past unnoticed, but the failing exit status cannot. It also warns when th
 uncommitted changes, because a row names a pull request and so cannot otherwise show that it
 measured code that never reached one.
 
-| Date | PR | 128 double | 128 real | 768 double | 768 real | Machine | CPU | Cores | JDK |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 2026-08-09 | #11 | 78.0 / 162.2 / 2.08 | 86.1 / 161.5 / 1.88 | 492.9 / 685.1 / 1.39 | 506.0 / 629.2 / 1.24 | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
-| 2026-08-09 | #12 | 77.3 / 100.1 / 1.29 | 84.5 / 100.4 / 1.19 | 491.7 / 527.0 / 1.07 | 505.2 / 512.8 / 1.01 | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
-| 2026-08-09 | #13 | 40.3 / 49.9 / 1.24 | 79.6 / 95.0 / 1.19 | 185.4 / 300.6 / 1.62 | 365.5 / 371.3 / 1.02 | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
-| 2026-08-09 | #15 | 35.4 / 54.8 / 1.55 | 47.5 / 62.4 / 1.31 | 177.2 / 309.2 / 1.74 | 218.8 / 307.7 / 1.41 | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
-| 2026-08-09 | #17 | 37.4 / 42.1 / 1.13 | 54.2 / 44.8 / 0.83 | 184.5 / 55.1 / 0.30 | 249.1 / 63.3 / 0.25 | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
+| Date | PR | 128 double | 128 real | 128 int8 | 128 int1 | 768 double | 768 real | 768 int8 | 768 int1 | Machine | CPU | Cores | JDK |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-08-09 | #11 | 78.0 / 162.2 / 2.08 | 86.1 / 161.5 / 1.88 | - | - | 492.9 / 685.1 / 1.39 | 506.0 / 629.2 / 1.24 | - | - | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
+| 2026-08-09 | #12 | 77.3 / 100.1 / 1.29 | 84.5 / 100.4 / 1.19 | - | - | 491.7 / 527.0 / 1.07 | 505.2 / 512.8 / 1.01 | - | - | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
+| 2026-08-09 | #13 | 40.3 / 49.9 / 1.24 | 79.6 / 95.0 / 1.19 | - | - | 185.4 / 300.6 / 1.62 | 365.5 / 371.3 / 1.02 | - | - | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
+| 2026-08-09 | #15 | 35.4 / 54.8 / 1.55 | 47.5 / 62.4 / 1.31 | - | - | 177.2 / 309.2 / 1.74 | 218.8 / 307.7 / 1.41 | - | - | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
+| 2026-08-09 | #17 | 37.4 / 42.1 / 1.13 | 54.2 / 44.8 / 0.83 | - | - | 184.5 / 55.1 / 0.30 | 249.1 / 63.3 / 0.25 | - | - | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
+| 2026-08-12 | #TBD | 48.0 / 49.6 / 1.03 | 56.6 / 49.6 / 0.88 | 100.6 / 83.6 / 0.83 | 13.8 / 28.7 / 2.07 | 196.4 / 64.6 / 0.33 | 266.0 / 72.5 / 0.27 | 521.2 / 133.7 / 0.26 | 27.9 / 39.6 / 1.42 | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |

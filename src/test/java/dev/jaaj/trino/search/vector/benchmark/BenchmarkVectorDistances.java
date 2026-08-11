@@ -14,6 +14,8 @@
 package dev.jaaj.trino.search.vector.benchmark;
 
 import dev.jaaj.trino.search.vector.Metric;
+import dev.jaaj.trino.search.vector.quantize.QuantizationBounds;
+import io.airlift.slice.Slice;
 import io.trino.spi.block.Block;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -67,6 +69,11 @@ public class BenchmarkVectorDistances
     private Block[] doubleRight;
     private Block[] realLeft;
     private Block[] realRight;
+    private QuantizationBounds bounds;
+    private Block[] int8Left;
+    private Block[] int8Right;
+    private Slice[] binaryLeft;
+    private Slice[] binaryRight;
     private int index;
 
     @Setup(Level.Trial)
@@ -79,6 +86,11 @@ public class BenchmarkVectorDistances
         doubleRight = VectorBlocks.doubleVectors(dataset.queries());
         realLeft = VectorBlocks.realVectors(dataset.base());
         realRight = VectorBlocks.realVectors(dataset.queries());
+        bounds = VectorBlocks.fitBounds(dataset.base());
+        int8Left = VectorBlocks.int8Vectors(dataset.base(), bounds);
+        int8Right = VectorBlocks.int8Vectors(dataset.queries(), bounds);
+        binaryLeft = VectorBlocks.binaryVectors(dataset.base(), bounds);
+        binaryRight = VectorBlocks.binaryVectors(dataset.queries(), bounds);
     }
 
     @Benchmark
@@ -93,5 +105,19 @@ public class BenchmarkVectorDistances
     {
         index = (index + 1) & (PAIR_POOL_SIZE - 1);
         return metric.compute(realLeft[index], realRight[index], REAL_READER);
+    }
+
+    @Benchmark
+    public double int8Vectors()
+    {
+        index = (index + 1) & (PAIR_POOL_SIZE - 1);
+        return metric.computeQuantizedBounded(int8Left[index], int8Right[index], bounds, Double.POSITIVE_INFINITY);
+    }
+
+    @Benchmark
+    public double binaryVectors()
+    {
+        index = (index + 1) & (PAIR_POOL_SIZE - 1);
+        return metric.computeBinary(binaryLeft[index], binaryRight[index]);
     }
 }

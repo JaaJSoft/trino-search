@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * One row of {@code BENCHMARKS.md}: the four reference measurements taken for one pull request,
+ * One row of {@code BENCHMARKS.md}: the eight reference measurements taken for one pull request,
  * plus the provenance that makes them readable later. The pull request is the only identifier
  * worth carrying, since a squash merge leaves nothing of the branch commit a row could name.
  * <p>
@@ -36,15 +36,17 @@ import java.util.Locale;
 public record ReferenceRow(
         String date,
         String pullRequest,
-        Measurement smallDouble,
-        Measurement smallReal,
-        Measurement largeDouble,
-        Measurement largeReal,
+        List<Measurement> measurements,
         String machine,
         String cpu,
         int cores,
         String jdk)
 {
+    public ReferenceRow
+    {
+        measurements = List.copyOf(measurements);
+    }
+
     /**
      * A ratio whose propagated relative error is this wide cannot show a regression smaller than
      * itself, which covers most of what this file exists to reveal. {@code BENCHMARKS.md} quotes
@@ -104,29 +106,23 @@ public record ReferenceRow(
 
     public String toMarkdownRow()
     {
-        return String.format(
-                Locale.ROOT,
-                "| %s | %s | %s | %s | %s | %s | %s | %s | %d | %s |",
-                date,
-                pullRequest,
-                cell(smallDouble),
-                cell(smallReal),
-                cell(largeDouble),
-                cell(largeReal),
-                machine,
-                cpu,
-                cores,
-                jdk);
+        StringBuilder row = new StringBuilder();
+        row.append(String.format(Locale.ROOT, "| %s | %s", date, pullRequest));
+        for (Measurement measurement : measurements) {
+            row.append(" | ").append(cell(measurement));
+        }
+        return row.append(String.format(Locale.ROOT, " | %s | %s | %d | %s |", machine, cpu, cores, jdk)).toString();
     }
 
     /**
      * Labels of the measurements whose ratio's propagated relative error is too wide to be worth
-     * recording.
+     * recording. This walks the same list {@link #toMarkdownRow} renders, so a measurement added
+     * later cannot be rendered without also being checked.
      */
     public List<String> tooNoisyToRecord()
     {
         List<String> noisy = new ArrayList<>();
-        for (Measurement measurement : List.of(smallDouble, smallReal, largeDouble, largeReal)) {
+        for (Measurement measurement : measurements) {
             if (measurement.ratioRelativeError() > RATIO_NOISE_THRESHOLD) {
                 noisy.add(measurement.label());
             }
