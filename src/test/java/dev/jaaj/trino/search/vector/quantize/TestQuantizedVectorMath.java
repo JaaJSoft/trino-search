@@ -136,6 +136,70 @@ public class TestQuantizedVectorMath
                 .isGreaterThan(1.0);
     }
 
+    /**
+     * Long enough that the vectorised loop runs on any preferred species, which the test above is
+     * not: the loop bound of a two-component vector is zero on every x86 species, so that call
+     * reaches the scalar tail, and the tail never consults the limit. The distance lives in the
+     * first two components, so the first checkpoint already settles the candidate.
+     * <p>
+     * The assertion is infinity rather than "above the limit" because the exact value, 25, is above
+     * a limit of 1 too: only the abandoned answer distinguishes an early return that ran from one
+     * that never fired.
+     */
+    @Test
+    public void testBoundedFormAbandonsInsideTheVectorisedLoop()
+    {
+        int length = 512;
+        double[] scales = new double[length];
+        Arrays.fill(scales, 1.0);
+        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[length], scales);
+
+        int[] origin = new int[length];
+        int[] spike = new int[length];
+        spike[0] = 3;
+        spike[1] = 4;
+
+        assertThat(QuantizedVectorMath.euclideanSquaredBounded(codes(origin), codes(spike), bounds, 1.0))
+                .isInfinite();
+        assertThat(QuantizedVectorMath.euclideanSquaredBounded(codes(origin), codes(spike), bounds, 1000.0))
+                .isEqualTo(25.0);
+    }
+
+    /**
+     * A dictionary block is refused the fast path, so the same contract is checked once more over
+     * the unrolled kernel and its own early return.
+     */
+    @Test
+    public void testBoundedFormAbandonsOnTheGeneralPathToo()
+    {
+        int length = 512;
+        double[] scales = new double[length];
+        Arrays.fill(scales, 1.0);
+        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[length], scales);
+
+        int[] values = new int[2 * length];
+        values[length] = 3;
+        values[length + 1] = 4;
+        Block underlying = codes(values);
+        int[] leftPositions = new int[length];
+        int[] rightPositions = new int[length];
+        for (int i = 0; i < length; i++) {
+            leftPositions[i] = i;
+            rightPositions[i] = length + i;
+        }
+        Block first = DictionaryBlock.create(length, underlying, leftPositions);
+        Block second = DictionaryBlock.create(length, underlying, rightPositions);
+
+        assertThat(QuantizedVectorMath.euclideanSquaredBounded(first, second, bounds, 1.0)).isInfinite();
+        assertThat(QuantizedVectorMath.euclideanSquaredBounded(first, second, bounds, 1000.0)).isEqualTo(25.0);
+    }
+
+    /**
+     * Textually the same computation as the shipped kernel today, so it is a pin for a future
+     * optimisation rather than an independent derivation: the hand-computed cases above are what
+     * carry the coverage until the kernel accumulates in integer lanes, at which point this
+     * becomes the reference it has to keep agreeing with.
+     */
     private static double referenceDotProduct(Block first, Block second, QuantizationBounds bounds)
     {
         double sum = 0;
