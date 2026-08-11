@@ -15,12 +15,14 @@ package dev.jaaj.trino.search.vector.knn;
 
 import dev.jaaj.trino.search.vector.Metric;
 import dev.jaaj.trino.search.vector.VectorReader;
+import dev.jaaj.trino.search.vector.quantize.QuantizationBounds;
 import io.airlift.slice.Slice;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.ArrayBlockBuilder;
 import io.trino.spi.block.Block;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.block.RowBlockBuilder;
+import io.trino.spi.block.SqlRow;
 import io.trino.spi.block.ValueBlock;
 import io.trino.spi.function.AggregationFunction;
 import io.trino.spi.function.AggregationState;
@@ -142,15 +144,98 @@ public final class KnnAggregation
         }
     }
 
-    private static void addCandidate(
-            KnnState state,
-            ValueBlock key,
-            int position,
-            Block vector,
-            Block queryVector,
-            long k,
-            Slice metricName,
-            VectorReader reader)
+    @AggregationFunction("knn_agg")
+    @Description("Returns the k nearest neighbours of a query vector within each group")
+    public static final class OfQuantizedVectors
+    {
+        private OfQuantizedVectors() {}
+
+        @InputFunction
+        @TypeParameter("K")
+        public static void input(
+                @AggregationState("K") KnnState state,
+                @SqlNullable @BlockPosition @SqlType("K") ValueBlock key,
+                @BlockIndex int position,
+                @SqlType("array(tinyint)") Block vector,
+                @SqlType("array(tinyint)") Block queryVector,
+                @SqlType(QuantizationBounds.BOUNDS_TYPE_SIGNATURE) SqlRow bounds,
+                @SqlType(StandardTypes.BIGINT) long k,
+                @SqlType(StandardTypes.VARCHAR) Slice metricName)
+        {
+            Metric metric = prepare(state, k, metricName);
+            if (vector.getPositionCount() != queryVector.getPositionCount()) {
+                throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "The arguments must have the same length");
+            }
+            if (vector.hasNull() || queryVector.hasNull()) {
+                return;
+            }
+            double distance = metric.computeQuantizedBounded(
+                    vector, queryVector, QuantizationBounds.of(bounds), state.getHeap().retentionLimit());
+            state.addToHeap(key, position, distance);
+        }
+
+        @CombineFunction
+        public static void combine(
+                @AggregationState("K") KnnState state,
+                @AggregationState("K") KnnState otherState)
+        {
+            mergeStates(state, otherState);
+        }
+
+        @SqlNullable
+        @OutputFunction("array(row(K, double))")
+        public static void output(
+                @AggregationState("K") KnnState state,
+                BlockBuilder out)
+        {
+            writeResult(state, out);
+        }
+    }
+
+    @AggregationFunction("knn_agg")
+    @Description("Returns the k nearest neighbours of a query vector within each group")
+    public static final class OfBinaryVectors
+    {
+        private OfBinaryVectors() {}
+
+        @InputFunction
+        @TypeParameter("K")
+        public static void input(
+                @AggregationState("K") KnnState state,
+                @SqlNullable @BlockPosition @SqlType("K") ValueBlock key,
+                @BlockIndex int position,
+                @SqlType(StandardTypes.VARBINARY) Slice vector,
+                @SqlType(StandardTypes.VARBINARY) Slice queryVector,
+                @SqlType(StandardTypes.BIGINT) long k,
+                @SqlType(StandardTypes.VARCHAR) Slice metricName)
+        {
+            Metric metric = prepare(state, k, metricName);
+            state.addToHeap(key, position, metric.computeBinary(vector, queryVector));
+        }
+
+        @CombineFunction
+        public static void combine(
+                @AggregationState("K") KnnState state,
+                @AggregationState("K") KnnState otherState)
+        {
+            mergeStates(state, otherState);
+        }
+
+        @SqlNullable
+        @OutputFunction("array(row(K, double))")
+        public static void output(
+                @AggregationState("K") KnnState state,
+                BlockBuilder out)
+        {
+            writeResult(state, out);
+        }
+    }
+
+    /**
+     * Validates k and the metric, attaching a heap on the first row of a group, and returns the
+     * metric this group is ranking by.
+     */
+    private static Metric prepare(KnnState state, long k, Slice metricName)
     {
         if (k <= 0) {
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "k must be greater than zero, got " + k);
@@ -161,25 +246,37 @@ public final class KnnAggregation
                     "k of knn_agg must be less than or equal to %s; found %s".formatted(MAX_K, k));
         }
 
-        Metric metric;
         if (state.getHeap() == null) {
-            metric = Metric.fromName(metricName);
+            Metric metric = Metric.fromName(metricName);
             state.setHeap(new KnnHeap((int) k, metric.higherIsCloser()));
             state.setK((int) k);
             state.setMetric(metric);
-        }
-        else {
-            metric = state.getMetric();
-            // Resolving the name costs two String allocations and a scan of the enum, on a path
-            // the engine walks once per row for an argument that is constant in every real query.
-            // Comparing the raw bytes against the canonical spelling answers the same question
-            // for free. Anything else, including another spelling of the same metric, falls
-            // through to the resolving check.
-            if (state.getK() != (int) k || !metric.hasCanonicalName(metricName)) {
-                checkConstantWithinGroup(state.getK(), (int) k, metric, Metric.fromName(metricName));
-            }
+            return metric;
         }
 
+        Metric metric = state.getMetric();
+        // Resolving the name costs two String allocations and a scan of the enum, on a path the
+        // engine walks once per row for an argument that is constant in every real query.
+        // Comparing the raw bytes against the canonical spelling answers the same question for
+        // free. Anything else, including another spelling of the same metric, falls through to
+        // the resolving check.
+        if (state.getK() != (int) k || !metric.hasCanonicalName(metricName)) {
+            checkConstantWithinGroup(state.getK(), (int) k, metric, Metric.fromName(metricName));
+        }
+        return metric;
+    }
+
+    private static void addCandidate(
+            KnnState state,
+            ValueBlock key,
+            int position,
+            Block vector,
+            Block queryVector,
+            long k,
+            Slice metricName,
+            VectorReader reader)
+    {
+        Metric metric = prepare(state, k, metricName);
         if (vector.getPositionCount() != queryVector.getPositionCount()) {
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "The arguments must have the same length");
         }

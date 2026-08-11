@@ -35,6 +35,8 @@ public class SearchPlugin
                 VectorFunctions.class,
                 KnnAggregation.OfDoubleVectors.class,
                 KnnAggregation.OfRealVectors.class,
+                KnnAggregation.OfQuantizedVectors.class,
+                KnnAggregation.OfBinaryVectors.class,
                 VectorBoundsAggregation.OfDoubleVectors.class,
                 VectorBoundsAggregation.OfRealVectors.class,
                 QuantizeFunctions.class,
