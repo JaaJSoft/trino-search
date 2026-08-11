@@ -15,13 +15,22 @@ package dev.jaaj.trino.search.vector.benchmark;
 
 import dev.jaaj.trino.search.vector.Metric;
 import dev.jaaj.trino.search.vector.quantize.BinaryCodes;
+import dev.jaaj.trino.search.vector.quantize.BoundsState;
+import dev.jaaj.trino.search.vector.quantize.BoundsStateFactory;
 import dev.jaaj.trino.search.vector.quantize.QuantizationBounds;
+import dev.jaaj.trino.search.vector.quantize.VectorBoundsAggregation;
 import io.airlift.slice.Slice;
 import io.trino.spi.block.Block;
+import io.trino.spi.block.BlockBuilder;
+import io.trino.spi.type.ArrayType;
+import io.trino.spi.type.RowType;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static dev.jaaj.trino.search.vector.VectorReader.DOUBLE_READER;
 import static dev.jaaj.trino.search.vector.VectorReader.REAL_READER;
+import static io.trino.spi.type.DoubleType.DOUBLE;
 import static io.trino.spi.type.TinyintType.TINYINT;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
@@ -83,6 +92,39 @@ public class TestVectorBlocks
         assertThat(bounds.offset(0)).isEqualTo(1.0);
         assertThat(bounds.scale(0)).isEqualTo(4.0 / 255.0);
         assertThat(bounds.scale(1)).isEqualTo(0.0);
+    }
+
+    /**
+     * The harness derives the offset and the scale itself, so the hand-computed values above only
+     * say that its own arithmetic is what it was written to be. Recall measured against parameters
+     * no user would ever be given is not recall, so the derivation is pinned against the one
+     * {@code vector_bounds_agg} actually produces.
+     */
+    @Test
+    public void testFitBoundsAgreesWithTheAggregation()
+    {
+        double[][] vectors = {{-1.0, 5.0, 0.25}, {3.0, 5.0, -7.5}, {0.5, 5.0, 2.0}};
+        QuantizationBounds harness = VectorBlocks.fitBounds(vectors);
+        QuantizationBounds aggregated = throughVectorBoundsAgg(vectors);
+
+        assertThat(harness.dimension()).isEqualTo(aggregated.dimension());
+        for (int i = 0; i < aggregated.dimension(); i++) {
+            assertThat(harness.offset(i)).as("offset %s", i).isEqualTo(aggregated.offset(i));
+            assertThat(harness.scale(i)).as("scale %s", i).isEqualTo(aggregated.scale(i));
+        }
+    }
+
+    private static QuantizationBounds throughVectorBoundsAgg(double[][] vectors)
+    {
+        BoundsState state = new BoundsStateFactory().createSingleState();
+        for (double[] vector : vectors) {
+            VectorBoundsAggregation.OfDoubleVectors.input(state, VectorBlocks.doubleVector(vector));
+        }
+        ArrayType doubleArray = new ArrayType(DOUBLE);
+        RowType rowType = RowType.anonymous(List.of(doubleArray, doubleArray));
+        BlockBuilder out = rowType.createBlockBuilder(null, 1);
+        VectorBoundsAggregation.OfDoubleVectors.output(state, out);
+        return QuantizationBounds.of(rowType.getObject(out.build(), 0));
     }
 
     @Test
