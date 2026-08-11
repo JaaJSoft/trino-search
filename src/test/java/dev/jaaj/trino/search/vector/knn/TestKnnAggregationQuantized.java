@@ -27,6 +27,9 @@ public class TestKnnAggregationQuantized
     private static final String UNIT_BOUNDS =
             "CAST(ROW(ARRAY[CAST(0.0 AS DOUBLE)], ARRAY[CAST(1.0 AS DOUBLE)]) "
                     + "AS row(offsets array(double), scales array(double)))";
+    private static final String TWO_DIMENSION_BOUNDS =
+            "CAST(ROW(ARRAY[CAST(0.0 AS DOUBLE), CAST(0.0 AS DOUBLE)], ARRAY[CAST(1.0 AS DOUBLE), CAST(1.0 AS DOUBLE)]) "
+                    + "AS row(offsets array(double), scales array(double)))";
 
     @Override
     protected QueryRunner createQueryRunner()
@@ -70,6 +73,49 @@ public class TestKnnAggregationQuantized
                 )
                 """.formatted(UNIT_BOUNDS),
                 "SELECT 3, 1");
+    }
+
+    /**
+     * Bounds fitted on fewer dimensions than the vectors carry: without the check the fast path is
+     * refused, the general kernel runs, and a block accessor throws an internal error on the first
+     * position past the end of the bounds.
+     */
+    @Test
+    public void testBoundsShorterThanTheVectorsAreRejected()
+    {
+        assertQueryFails(
+                """
+                SELECT knn_agg(id, v, ARRAY[CAST(0 AS TINYINT), CAST(0 AS TINYINT)], %s, 2, 'euclidean')
+                FROM (VALUES (1, ARRAY[CAST(3 AS TINYINT), CAST(4 AS TINYINT)])) AS t(id, v)
+                """.formatted(UNIT_BOUNDS),
+                ".*2 components but the quantisation bounds were fitted on 1.*");
+    }
+
+    /**
+     * The other direction, and the one that fails silently: without the check the aggregation ranks
+     * on the dimensions the vectors do have and returns plausible distances, while the identical
+     * scalar expression throws.
+     */
+    @Test
+    public void testBoundsLongerThanTheVectorsAreRejected()
+    {
+        assertQueryFails(
+                """
+                SELECT knn_agg(id, v, ARRAY[CAST(0 AS TINYINT)], %s, 2, 'euclidean')
+                FROM (VALUES (1, ARRAY[CAST(3 AS TINYINT)])) AS t(id, v)
+                """.formatted(TWO_DIMENSION_BOUNDS),
+                ".*1 components but the quantisation bounds were fitted on 2.*");
+    }
+
+    @Test
+    public void testMismatchedVectorLengthsAreRejected()
+    {
+        assertQueryFails(
+                """
+                SELECT knn_agg(id, v, ARRAY[CAST(0 AS TINYINT)], %s, 2, 'euclidean')
+                FROM (VALUES (1, ARRAY[CAST(3 AS TINYINT), CAST(4 AS TINYINT)])) AS t(id, v)
+                """.formatted(UNIT_BOUNDS),
+                ".*The arguments must have the same length.*");
     }
 
     @Test

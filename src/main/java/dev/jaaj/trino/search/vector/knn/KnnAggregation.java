@@ -16,6 +16,7 @@ package dev.jaaj.trino.search.vector.knn;
 import dev.jaaj.trino.search.vector.Metric;
 import dev.jaaj.trino.search.vector.VectorReader;
 import dev.jaaj.trino.search.vector.quantize.QuantizationBounds;
+import dev.jaaj.trino.search.vector.quantize.QuantizedVectorMath;
 import io.airlift.slice.Slice;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.ArrayBlockBuilder;
@@ -163,14 +164,17 @@ public final class KnnAggregation
                 @SqlType(StandardTypes.VARCHAR) Slice metricName)
         {
             Metric metric = prepare(state, k, metricName);
-            if (vector.getPositionCount() != queryVector.getPositionCount()) {
-                throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "The arguments must have the same length");
-            }
+            // Both vectors against each other and against the bounds, through the same check the
+            // scalar functions use: bounds longer than the vectors would otherwise rank on a prefix
+            // of the dimensions and return a plausible number, and bounds shorter than them would
+            // surface as a block accessor's internal error rather than as a user-facing one.
+            QuantizationBounds quantizationBounds = QuantizationBounds.of(bounds);
+            QuantizedVectorMath.checkSameLength(vector, queryVector, quantizationBounds);
             if (vector.hasNull() || queryVector.hasNull()) {
                 return;
             }
             double distance = metric.computeQuantizedBounded(
-                    vector, queryVector, QuantizationBounds.of(bounds), state.getHeap().retentionLimit());
+                    vector, queryVector, quantizationBounds, state.getHeap().retentionLimit());
             state.addToHeap(key, position, distance);
         }
 
