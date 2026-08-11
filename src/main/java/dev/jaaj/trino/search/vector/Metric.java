@@ -13,6 +13,9 @@
  */
 package dev.jaaj.trino.search.vector;
 
+import dev.jaaj.trino.search.vector.quantize.BinaryVectorMath;
+import dev.jaaj.trino.search.vector.quantize.QuantizationBounds;
+import dev.jaaj.trino.search.vector.quantize.QuantizedVectorMath;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import io.trino.spi.TrinoException;
@@ -42,6 +45,22 @@ public enum Metric
         {
             return Math.sqrt(VectorMath.euclideanSquaredBounded(first, second, reader, limit * limit));
         }
+
+        /**
+         * The accumulation is squared while the limit is a distance, so the limit is squared to
+         * meet it, exactly as {@link #computeBounded} does for the float representation.
+         */
+        @Override
+        public double computeQuantizedBounded(Block first, Block second, QuantizationBounds bounds, double limit)
+        {
+            return Math.sqrt(QuantizedVectorMath.euclideanSquaredBounded(first, second, bounds, limit * limit));
+        }
+
+        @Override
+        public double computeBinary(Slice first, Slice second)
+        {
+            return BinaryVectorMath.euclidean(first, second);
+        }
     },
     EUCLIDEAN_SQUARED("euclidean_squared", false) {
         @Override
@@ -55,12 +74,36 @@ public enum Metric
         {
             return VectorMath.euclideanSquaredBounded(first, second, reader, limit);
         }
+
+        @Override
+        public double computeQuantizedBounded(Block first, Block second, QuantizationBounds bounds, double limit)
+        {
+            return QuantizedVectorMath.euclideanSquaredBounded(first, second, bounds, limit);
+        }
+
+        @Override
+        public double computeBinary(Slice first, Slice second)
+        {
+            return BinaryVectorMath.euclideanSquared(first, second);
+        }
     },
     COSINE("cosine", false) {
         @Override
         public double compute(Block first, Block second, VectorReader reader)
         {
             return 1.0 - VectorMath.cosineSimilarity(first, second, reader);
+        }
+
+        @Override
+        public double computeQuantizedBounded(Block first, Block second, QuantizationBounds bounds, double limit)
+        {
+            return 1.0 - QuantizedVectorMath.cosineSimilarity(first, second, bounds);
+        }
+
+        @Override
+        public double computeBinary(Slice first, Slice second)
+        {
+            return 1.0 - BinaryVectorMath.cosineSimilarity(first, second);
         }
     },
     DOT_PRODUCT("dot_product", true) {
@@ -69,12 +112,36 @@ public enum Metric
         {
             return VectorMath.dotProduct(first, second, reader);
         }
+
+        @Override
+        public double computeQuantizedBounded(Block first, Block second, QuantizationBounds bounds, double limit)
+        {
+            return QuantizedVectorMath.dotProduct(first, second, bounds);
+        }
+
+        @Override
+        public double computeBinary(Slice first, Slice second)
+        {
+            return BinaryVectorMath.dotProduct(first, second);
+        }
     },
     MANHATTAN("manhattan", false) {
         @Override
         public double compute(Block first, Block second, VectorReader reader)
         {
             return VectorMath.manhattan(first, second, reader);
+        }
+
+        @Override
+        public double computeQuantizedBounded(Block first, Block second, QuantizationBounds bounds, double limit)
+        {
+            return QuantizedVectorMath.manhattan(first, second, bounds);
+        }
+
+        @Override
+        public double computeBinary(Slice first, Slice second)
+        {
+            return BinaryVectorMath.manhattan(first, second);
         }
     };
 
@@ -90,6 +157,20 @@ public enum Metric
     }
 
     public abstract double compute(Block first, Block second, VectorReader reader);
+
+    /**
+     * The metric over two vectors of one-byte codes fitted against the same bounds. The limit has
+     * the meaning {@link #computeBounded} gives it: a metric accumulated from non-negative terms
+     * may return any value above it once the components read so far already put it there.
+     */
+    public abstract double computeQuantizedBounded(Block first, Block second, QuantizationBounds bounds, double limit);
+
+    /**
+     * The metric over two one-bit-per-component vectors. There is no bounded form: every one of
+     * these is a closed form in a single Hamming count that is already computed in one pass, so
+     * there is nothing to abandon part way through.
+     */
+    public abstract double computeBinary(Slice first, Slice second);
 
     /**
      * The metric value, or, once the components read so far already show the candidate cannot beat
