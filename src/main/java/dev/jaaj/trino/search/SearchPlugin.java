@@ -17,6 +17,7 @@ import dev.jaaj.trino.search.vector.VectorDistanceFunctions;
 import dev.jaaj.trino.search.vector.VectorFunctions;
 import dev.jaaj.trino.search.vector.knn.KnnAggregation;
 import dev.jaaj.trino.search.vector.quantize.QuantizeFunctions;
+import dev.jaaj.trino.search.vector.quantize.QuantizedDistanceFunctions;
 import dev.jaaj.trino.search.vector.quantize.VectorBoundsAggregation;
 import io.trino.spi.Plugin;
 
@@ -35,6 +36,7 @@ public class SearchPlugin
                 KnnAggregation.OfRealVectors.class,
                 VectorBoundsAggregation.OfDoubleVectors.class,
                 VectorBoundsAggregation.OfRealVectors.class,
-                QuantizeFunctions.class);
+                QuantizeFunctions.class,
+                QuantizedDistanceFunctions.class);
     }
 }
