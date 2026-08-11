@@ -133,4 +133,69 @@ public class TestQuantizedVectorMath
         assertThat(QuantizedVectorMath.euclideanSquaredBounded(codes(0, 0), codes(3, 4), bounds, 1.0))
                 .isGreaterThan(1.0);
     }
+
+    private static double referenceDotProduct(Block first, Block second, QuantizationBounds bounds)
+    {
+        double sum = 0;
+        for (int i = 0; i < first.getPositionCount(); i++) {
+            sum += bounds.decode(i, TINYINT.getByte(first, i)) * bounds.decode(i, TINYINT.getByte(second, i));
+        }
+        return sum;
+    }
+
+    @Test
+    public void testDotProductAgainstAHandComputedValue()
+    {
+        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, new double[] {1, 1});
+        assertThat(QuantizedVectorMath.dotProduct(codes(1, 2), codes(3, 4), bounds)).isEqualTo(11.0);
+    }
+
+    /**
+     * A product leaves cross terms in the offset, so unlike euclidean this one must read them. A
+     * kernel that dropped them would pass every zero-offset test and be wrong on real bounds.
+     */
+    @Test
+    public void testDotProductReadsTheOffsets()
+    {
+        QuantizationBounds shifted = QuantizationBounds.forTesting(new double[] {10, 10}, new double[] {1, 1});
+        // (10+1)*(10+3) + (10+2)*(10+4) = 143 + 168
+        assertThat(QuantizedVectorMath.dotProduct(codes(1, 2), codes(3, 4), shifted)).isEqualTo(311.0);
+    }
+
+    @Test
+    public void testCosineSimilarityOfIdenticalVectorsIsOne()
+    {
+        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, new double[] {1, 1});
+        assertThat(QuantizedVectorMath.cosineSimilarity(codes(3, 4), codes(3, 4), bounds)).isEqualTo(1.0);
+    }
+
+    @Test
+    public void testCosineSimilarityOfOrthogonalVectorsIsZero()
+    {
+        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, new double[] {1, 1});
+        assertThat(QuantizedVectorMath.cosineSimilarity(codes(5, 0), codes(0, 7), bounds)).isEqualTo(0.0);
+    }
+
+    @Test
+    public void testDotProductMatchesTheDequantiseThenComputeReference()
+    {
+        SplittableRandom random = new SplittableRandom(7);
+        int dimension = 128;
+        double[] offsets = new double[dimension];
+        double[] scales = new double[dimension];
+        for (int i = 0; i < dimension; i++) {
+            offsets[i] = random.nextDouble(-2, 2);
+            scales[i] = random.nextDouble(0.001, 0.1);
+        }
+        QuantizationBounds bounds = QuantizationBounds.forTesting(offsets, scales);
+
+        int[] left = new int[dimension];
+        int[] right = new int[dimension];
+        for (int i = 0; i < dimension; i++) {
+            left[i] = random.nextInt(-128, 128);
+            right[i] = random.nextInt(-128, 128);
+        }
+        assertThat(QuantizedVectorMath.dotProduct(codes(left), codes(right), bounds))
+                .isCloseTo(referenceDotProduct(codes(left), codes(right), bounds), within(1e-9));
+    }
 }

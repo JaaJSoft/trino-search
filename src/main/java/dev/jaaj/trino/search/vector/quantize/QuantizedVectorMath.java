@@ -125,4 +125,37 @@ public final class QuantizedVectorMath
         }
         return Math.max(step, CHECK_STRIDE - (CHECK_STRIDE % step));
     }
+
+    public static double dotProduct(Block first, Block second, QuantizationBounds bounds)
+    {
+        double sum = 0;
+        for (int i = 0; i < first.getPositionCount(); i++) {
+            sum += bounds.decode(i, TINYINT.getByte(first, i)) * bounds.decode(i, TINYINT.getByte(second, i));
+        }
+        return sum;
+    }
+
+    /**
+     * Both magnitudes and the dot product in one pass over the codes. The vectors here are bounded
+     * by construction, since a code cannot exceed 127 and a scale is finite, so none of the
+     * overflow rescaling the float kernels carry is reachable: the only degenerate case left is a
+     * vector that dequantises to all zeros.
+     */
+    public static double cosineSimilarity(Block first, Block second, QuantizationBounds bounds)
+    {
+        double firstMagnitude = 0;
+        double secondMagnitude = 0;
+        double dotProduct = 0;
+        for (int i = 0; i < first.getPositionCount(); i++) {
+            double firstValue = bounds.decode(i, TINYINT.getByte(first, i));
+            double secondValue = bounds.decode(i, TINYINT.getByte(second, i));
+            firstMagnitude += firstValue * firstValue;
+            secondMagnitude += secondValue * secondValue;
+            dotProduct += firstValue * secondValue;
+        }
+        if (firstMagnitude == 0 || secondMagnitude == 0) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "Vector magnitude cannot be zero");
+        }
+        return dotProduct / Math.sqrt(firstMagnitude * secondMagnitude);
+    }
 }
