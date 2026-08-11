@@ -15,6 +15,13 @@ package dev.jaaj.trino.search.vector.quantize;
 
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
+import io.trino.spi.block.ByteArrayBlock;
+import io.trino.spi.block.LongArrayBlock;
+import jdk.incubator.vector.ByteVector;
+import jdk.incubator.vector.DoubleVector;
+import jdk.incubator.vector.LongVector;
+import jdk.incubator.vector.VectorOperators;
+import jdk.incubator.vector.VectorSpecies;
 
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static io.trino.spi.type.TinyintType.TINYINT;
@@ -33,6 +40,16 @@ public final class QuantizedVectorMath
     private static final int UNROLL = 4;
 
     private static final int CHECK_STRIDE = 64;
+
+    private static final VectorSpecies<Byte> BYTE_SPECIES = ByteVector.SPECIES_PREFERRED;
+    private static final VectorSpecies<Double> DOUBLE_SPECIES = DoubleVector.SPECIES_PREFERRED;
+    private static final VectorSpecies<Long> LONG_SPECIES = LongVector.SPECIES_PREFERRED;
+
+    /**
+     * How many double vectors one byte vector's worth of components widens into. Both species are
+     * the preferred ones, so they share a shape and this is the ratio of their element sizes.
+     */
+    private static final int WIDENING_PARTS = BYTE_SPECIES.length() / DOUBLE_SPECIES.length();
 
     private QuantizedVectorMath() {}
 
@@ -60,6 +77,97 @@ public final class QuantizedVectorMath
      * up sound.
      */
     public static double euclideanSquaredBounded(Block first, Block second, QuantizationBounds bounds, double limit)
+    {
+        // Only a plain ByteArrayBlock stores a vector's components contiguously and in order. A
+        // dictionary block maps position i somewhere else in a shared array and a run-length block
+        // holds a single component, so indexing their backing arrays would compute a distance
+        // between vectors nobody asked for. The scales are read the same way, as the raw double
+        // bits behind an array(double) element block.
+        //
+        // Nothing upstream checks the bounds against the vectors' length, only the two vectors
+        // against each other: a short bounds array is caught by the scalar path's block accessor
+        // throwing on an out-of-range position, so the fast path has to fail the same way rather
+        // than reading past the end of the raw long[] it indexes directly.
+        if (first instanceof ByteArrayBlock left
+                && second instanceof ByteArrayBlock right
+                && bounds.scales() instanceof LongArrayBlock scales
+                && !left.mayHaveNull()
+                && !right.mayHaveNull()
+                && !scales.mayHaveNull()
+                && scales.getPositionCount() >= first.getPositionCount()) {
+            return euclideanSquaredVectorized(left, right, scales, limit);
+        }
+        return euclideanSquaredUnrolled(first, second, bounds, limit);
+    }
+
+    /**
+     * One byte vector holds {@link #WIDENING_PARTS} double vectors' worth of components, so each
+     * load feeds that many halves through the same accumulator. The offsets are not read at all:
+     * both operands carry the same one and it cancels in the difference.
+     * <p>
+     * The codes are widened to double lanes before they are subtracted. Widening first and
+     * subtracting after is what keeps the arithmetic exact: a difference of two values in
+     * {@code [-128, 127]} does not fit back into a byte, so computing it in byte lanes would wrap
+     * silently instead of producing a value like 255.
+     */
+    private static double euclideanSquaredVectorized(
+            ByteArrayBlock first,
+            ByteArrayBlock second,
+            LongArrayBlock scaleBits,
+            double limit)
+    {
+        byte[] leftCodes = first.getRawValues();
+        byte[] rightCodes = second.getRawValues();
+        int leftBase = first.getRawValuesOffset();
+        int rightBase = second.getRawValuesOffset();
+        long[] scales = scaleBits.getRawValues();
+        int scaleBase = scaleBits.getRawValuesOffset();
+        int length = first.getPositionCount();
+
+        DoubleVector sum = DoubleVector.zero(DOUBLE_SPECIES);
+        int lanes = BYTE_SPECIES.length();
+        int vectorized = BYTE_SPECIES.loopBound(length);
+        int stride = checkStride(lanes, vectorized, limit);
+        int i = 0;
+        while (i < vectorized) {
+            int checkpoint = Math.min(i + stride, vectorized);
+            for (; i < checkpoint; i += lanes) {
+                ByteVector left = ByteVector.fromArray(BYTE_SPECIES, leftCodes, leftBase + i);
+                ByteVector right = ByteVector.fromArray(BYTE_SPECIES, rightCodes, rightBase + i);
+                // Part p of a widened byte vector covers DOUBLE_SPECIES.length() consecutive
+                // components starting at offset p * DOUBLE_SPECIES.length() within the byte vector's
+                // own lanes, exactly as VectorMath's array(real) kernel widens an int vector with
+                // F2D. The matching scales sit at that same offset from the current position i, since
+                // the scale array and the code arrays advance together one component at a time. Off
+                // by one part here pairs every difference with the wrong dimension's scale while
+                // still producing a plausible-looking number, which is why the per-dimension-scale
+                // test exists.
+                for (int part = 0; part < WIDENING_PARTS; part++) {
+                    DoubleVector difference =
+                            ((DoubleVector) left.convertShape(VectorOperators.B2D, DOUBLE_SPECIES, part))
+                                    .sub((DoubleVector) right.convertShape(VectorOperators.B2D, DOUBLE_SPECIES, part));
+                    DoubleVector scale = LongVector
+                            .fromArray(LONG_SPECIES, scales, scaleBase + i + part * DOUBLE_SPECIES.length())
+                            .reinterpretAsDoubles();
+                    DoubleVector scaled = difference.mul(scale);
+                    sum = scaled.fma(scaled, sum);
+                }
+            }
+            if (sum.reduceLanes(VectorOperators.ADD) > limit) {
+                return Double.POSITIVE_INFINITY;
+            }
+        }
+
+        double total = sum.reduceLanes(VectorOperators.ADD);
+        for (; i < length; i++) {
+            double difference = (leftCodes[leftBase + i] - rightCodes[rightBase + i])
+                    * Double.longBitsToDouble(scales[scaleBase + i]);
+            total += difference * difference;
+        }
+        return total;
+    }
+
+    private static double euclideanSquaredUnrolled(Block first, Block second, QuantizationBounds bounds, double limit)
     {
         int length = first.getPositionCount();
         double sum0 = 0;
