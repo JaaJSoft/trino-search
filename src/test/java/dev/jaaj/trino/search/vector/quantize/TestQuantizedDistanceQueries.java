@@ -105,12 +105,14 @@ public class TestQuantizedDistanceQueries
 
     /**
      * The bounds argument is not optional on code arrays, and there is nothing in the type system
-     * that can enforce it: array(tinyint) coerces implicitly to array(double), so a two-argument
-     * call binds to the exact-vector overload and computes on the raw codes with no scales at all.
-     * This pins that resolution so the behaviour is a known quantity rather than a discovery.
+     * that can enforce it: array(tinyint) coerces implicitly to the float vector types, so a
+     * two-argument call compiles, binds to an exact-vector overload and computes on the raw codes
+     * with no scales at all. This pins that the trap exists and is silent, which is what makes it a
+     * trap; which of the two float overloads it lands on is not observable from here, since a code
+     * widens to the same value through either reader and both kernels accumulate in double.
      */
     @Test
-    public void testTwoArgumentCallOnCodeArraysCoercesToTheDoubleOverload()
+    public void testTwoArgumentCallOnCodeArraysComputesOnTheRawCodesWithNoScales()
     {
         assertQuery(
                 "SELECT euclidean_squared_distance(" + ORIGIN + ", " + THREE_FOUR + ")",

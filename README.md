@@ -71,9 +71,9 @@ the fitted bounds are a **mandatory third argument**:
 euclidean_distance(codes_a, codes_b, bounds)
 ```
 
-> Dropping that argument does not fail. `array(tinyint)` coerces implicitly to `array(double)`, so
-> a two-argument call compiles, binds to the exact-vector overload, and computes on the raw codes
-> with no scales at all: a plausible number and a wrong ranking as soon as the scales differ
+> Dropping that argument does not fail. `array(tinyint)` coerces implicitly to the float vector
+> types, so a two-argument call compiles, binds to an exact-vector overload, and computes on the raw
+> codes with no scales at all: a plausible number and a wrong ranking as soon as the scales differ
 > between dimensions. The bounds are what turn the raw codes back into the real metric, and for
 > `cosine_similarity` they are what make it meaningful at all, since cosine is not
 > translation-invariant.

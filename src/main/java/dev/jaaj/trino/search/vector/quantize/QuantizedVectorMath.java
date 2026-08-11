@@ -244,10 +244,14 @@ public final class QuantizedVectorMath
     }
 
     /**
-     * Both magnitudes and the dot product in one pass over the codes. The vectors here are bounded
-     * by construction, since a code cannot exceed 127 and a scale is finite, so none of the
-     * overflow rescaling the float kernels carry is reachable: the only degenerate case left is a
-     * vector that dequantises to all zeros.
+     * Both magnitudes and the dot product in one pass over the codes. None of the overflow
+     * rescaling the float kernels carry is reproduced here: a code cannot exceed 127 in magnitude,
+     * so a dequantised component is only as large as the bounds it was fitted against, and bounds
+     * large enough to overflow a sum of squares describe a corpus the float kernels could not have
+     * held either. Nothing validates the bounds, which come from a user-written row or from
+     * {@code vector_bounds_agg} over a corpus of the caller's choosing, so bounds carrying an
+     * infinite or NaN scale propagate into the result rather than being rescaled away. The only
+     * case rejected outright is a vector that dequantises to all zeros.
      */
     public static double cosineSimilarity(Block first, Block second, QuantizationBounds bounds)
     {

@@ -31,10 +31,9 @@ import static io.trino.spi.type.TinyintType.TINYINT;
 /**
  * Encodes a vector against fitted bounds.
  * <p>
- * There is one function name per output type rather than one overloaded name, for the reason
- * {@code EmbeddingFunctions} gives for {@code to_vector_real} and {@code to_vector_double}: Trino
- * resolves overloads on argument types, and these take identical arguments. The canonical name is
- * the Trino type and the alias is the machine representation.
+ * There is one function name per output type rather than one overloaded name: Trino resolves
+ * overloads on argument types, and these two take identical arguments. The canonical name is the
+ * Trino type and the alias is the machine representation.
  */
 public final class QuantizeFunctions
 {

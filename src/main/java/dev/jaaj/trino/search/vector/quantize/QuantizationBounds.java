@@ -39,8 +39,10 @@ public final class QuantizationBounds
     private static final ArrayType DOUBLE_ARRAY = new ArrayType(DOUBLE);
 
     /**
-     * A signed byte holds 256 codes, and the range is spread about its midpoint so that the whole
-     * of {@code [-128, 127]} is used rather than half of it.
+     * A signed byte holds 256 codes, and the fitted range is spread over 255 steps about its own
+     * midpoint: the midpoint encodes to 0, the fitted minimum to -127 and the fitted maximum to
+     * +127. The codes are therefore centred, and the one code left over, -128, is only reached by a
+     * value below the fitted range.
      */
     public static final int CODE_LEVELS = 255;
 
