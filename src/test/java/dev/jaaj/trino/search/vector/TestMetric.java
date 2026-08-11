@@ -173,16 +173,42 @@ public class TestMetric
     }
 
     /**
-     * The bounded form must never claim a candidate is under the limit when it is not. Metrics
-     * whose terms are signed cannot settle that early and are expected to ignore the limit.
+     * Eight components so {@code QuantizedVectorMath.UNROLL} divides the length and the bounded
+     * loop's early-return check actually runs: a shorter vector skips straight to the scalar tail,
+     * which never reads the limit at all.
      */
     @Test
-    public void testQuantisedEuclideanRespectsTheLimit()
+    public void testQuantisedEuclideanSquaredAbandonsPastATightLimitButComputesExactlyUnderAGenerousOne()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, new double[] {1, 1});
-        assertThat(Metric.EUCLIDEAN_SQUARED.computeQuantizedBounded(
-                quantizedCodes(0, 0), quantizedCodes(3, 4), bounds, 1.0))
+        QuantizationBounds bounds = QuantizationBounds.forTesting(
+                new double[] {0, 0, 0, 0, 0, 0, 0, 0},
+                new double[] {1, 1, 1, 1, 1, 1, 1, 1});
+        Block origin = quantizedCodes(0, 0, 0, 0, 0, 0, 0, 0);
+        Block threeFour = quantizedCodes(3, 4, 0, 0, 0, 0, 0, 0);
+
+        assertThat(Metric.EUCLIDEAN_SQUARED.computeQuantizedBounded(origin, threeFour, bounds, 1.0))
                 .isGreaterThan(1.0);
+        assertThat(Metric.EUCLIDEAN_SQUARED.computeQuantizedBounded(origin, threeFour, bounds, 1000.0))
+                .isEqualTo(25.0);
+    }
+
+    /**
+     * The limit passed in is 10, strictly between the true distance of 5 and its square of 25:
+     * only squaring it before comparing keeps this candidate. A caller that forgot to square would
+     * compare the squared sum of 25 against the raw 10, abandon early, and return infinity instead
+     * of 5.0.
+     */
+    @Test
+    public void testQuantisedEuclideanSquaresTheLimitBeforeComparingToTheSquaredSum()
+    {
+        QuantizationBounds bounds = QuantizationBounds.forTesting(
+                new double[] {0, 0, 0, 0, 0, 0, 0, 0},
+                new double[] {1, 1, 1, 1, 1, 1, 1, 1});
+        Block origin = quantizedCodes(0, 0, 0, 0, 0, 0, 0, 0);
+        Block threeFour = quantizedCodes(3, 4, 0, 0, 0, 0, 0, 0);
+
+        assertThat(Metric.EUCLIDEAN.computeQuantizedBounded(origin, threeFour, bounds, 10.0))
+                .isEqualTo(5.0);
     }
 
     @Test
