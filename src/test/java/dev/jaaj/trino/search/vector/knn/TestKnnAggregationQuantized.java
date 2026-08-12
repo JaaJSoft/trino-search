@@ -57,11 +57,12 @@ public class TestKnnAggregationQuantized
     }
 
     /**
-     * A single partition never calls the combine function, so only a plan with several splits
-     * would catch a combine that drops candidates.
+     * Exercises the heap over many candidates within a single partition. {@code StandaloneQueryRunner}
+     * has no splittable catalog, so this never reaches {@code @CombineFunction}; that coverage lives
+     * in {@code TestKnnAggregationQuantizedDistributed}.
      */
     @Test
-    public void testQuantizedKnnAcrossMultipleSplits()
+    public void testQuantizedKnnOverManyRows()
     {
         assertQuery(
                 """
@@ -304,8 +305,12 @@ public class TestKnnAggregationQuantized
                 "SELECT 2");
     }
 
+    /**
+     * Exercises the heap over many candidates within a single partition; see
+     * {@link #testQuantizedKnnOverManyRows} for why this is not split coverage.
+     */
     @Test
-    public void testBinaryKnnAcrossMultipleSplits()
+    public void testBinaryKnnOverManyRows()
     {
         assertQuery(
                 """
