@@ -133,7 +133,7 @@ public final class QuantizedVectorMath
      * producing a value like 255.
      * <p>
      * The {@code IntVector} accumulator is periodically folded into a {@code long} running total,
-     * both to answer the caller's limit and to stay within {@link #FLUSH_ITERATIONS} of its own
+     * both to answer the caller's limit and to stay within {@link #FLUSH_COMPONENTS} of its own
      * 32-bit lanes: a squared difference is at most {@code 255 * 255 = 65025}, small individually,
      * but a dimension with no cap on it would otherwise wrap an {@code int} lane silently and could
      * turn a distant vector into the nearest neighbour.
