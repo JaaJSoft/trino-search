@@ -126,4 +126,34 @@ public final class BruteForce
         }
         return distances;
     }
+
+    /**
+     * The indexes of the {@code k} nearest base vectors, nearest first.
+     * <p>
+     * The companion of {@link #sortedDistances} for a caller that has to know which vectors those
+     * are rather than how far they were. An approximate ranking cannot be scored on distance
+     * values: they come from quantised codes and differ from the exact ones by construction, so
+     * comparing them would measure the quantisation error instead of the recall.
+     */
+    public static int[] sortedKeys(double[] query, double[][] base, Distance distance, int k)
+    {
+        double[] scores = new double[base.length];
+        for (int i = 0; i < base.length; i++) {
+            scores[i] = distance.between(query, base[i]);
+        }
+
+        Integer[] indexes = new Integer[base.length];
+        for (int i = 0; i < indexes.length; i++) {
+            indexes[i] = i;
+        }
+        Arrays.sort(indexes, (left, right) -> distance.higherIsCloser()
+                ? Double.compare(scores[right], scores[left])
+                : Double.compare(scores[left], scores[right]));
+
+        int[] keys = new int[Math.min(k, base.length)];
+        for (int i = 0; i < keys.length; i++) {
+            keys[i] = indexes[i];
+        }
+        return keys;
+    }
 }

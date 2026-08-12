@@ -36,9 +36,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
 /**
- * Measures the four reference points and prints the {@code BENCHMARKS.md} row for them.
+ * Measures the eight reference points and prints the {@code BENCHMARKS.md} row for them.
  * <p>
- * Eight JMH configurations instead of the full grid's fifty-four is what brings a recording down
+ * Sixteen JMH configurations instead of the full grid's 108 is what brings a recording down
  * from a quarter of an hour to a few minutes, which is the difference between a habit that
  * survives and one abandoned by the third pull request. Each benchmark keeps its own fork, warmup
  * and iteration counts, so a recorded row is produced under the same conditions as a full run.
@@ -76,10 +76,15 @@ public final class ReferenceRowRunner
         ReferenceRow row = new ReferenceRow(
                 LocalDate.now().toString(),
                 pullRequestLabel(args),
-                measure("128 double", SMALL_DIMENSION, "doubleVectors", "doubleRows"),
-                measure("128 real", SMALL_DIMENSION, "realVectors", "realRows"),
-                measure("768 double", LARGE_DIMENSION, "doubleVectors", "doubleRows"),
-                measure("768 real", LARGE_DIMENSION, "realVectors", "realRows"),
+                List.of(
+                        measure("128 double", SMALL_DIMENSION, "doubleVectors", "doubleRows"),
+                        measure("128 real", SMALL_DIMENSION, "realVectors", "realRows"),
+                        measure("128 int8", SMALL_DIMENSION, "int8Vectors", "int8Rows"),
+                        measure("128 int1", SMALL_DIMENSION, "binaryVectors", "binaryRows"),
+                        measure("768 double", LARGE_DIMENSION, "doubleVectors", "doubleRows"),
+                        measure("768 real", LARGE_DIMENSION, "realVectors", "realRows"),
+                        measure("768 int8", LARGE_DIMENSION, "int8Vectors", "int8Rows"),
+                        measure("768 int1", LARGE_DIMENSION, "binaryVectors", "binaryRows")),
                 machineLabel(args),
                 currentCpu(),
                 Runtime.getRuntime().availableProcessors(),

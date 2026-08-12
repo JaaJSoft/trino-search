@@ -15,6 +15,7 @@ package dev.jaaj.trino.search.vector.benchmark;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Locale;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,10 +31,11 @@ public class TestReferenceRow
                 // Values already at one decimal on purpose: a score such as 102.95 sits close
                 // enough to a rounding boundary that %.1f can land either side of it depending on
                 // the binary representation, which would make this expectation flaky.
-                new ReferenceRow.Measurement("128 double", 91.8, 1.0, 219.0, 2.0),
-                new ReferenceRow.Measurement("128 real", 103.0, 1.0, 187.8, 2.0),
-                new ReferenceRow.Measurement("768 double", 523.3, 5.0, 859.3, 8.0),
-                new ReferenceRow.Measurement("768 real", 564.2, 5.0, 829.3, 8.0),
+                List.of(
+                        new ReferenceRow.Measurement("128 double", 91.8, 1.0, 219.0, 2.0),
+                        new ReferenceRow.Measurement("128 real", 103.0, 1.0, 187.8, 2.0),
+                        new ReferenceRow.Measurement("768 double", 523.3, 5.0, 859.3, 8.0),
+                        new ReferenceRow.Measurement("768 real", 564.2, 5.0, 829.3, 8.0)),
                 "desktop-5950x",
                 "AMD Ryzen 9 5950X 16-Core Processor",
                 32,
@@ -43,7 +45,45 @@ public class TestReferenceRow
     @Test
     public void testRatioIsThePerRowCostOverTheKernelCost()
     {
-        assertThat(row().smallDouble().ratio()).isCloseTo(219.0 / 91.8, within(1e-12));
+        assertThat(row().measurements().get(0).ratio()).isCloseTo(219.0 / 91.8, within(1e-12));
+    }
+
+    @Test
+    public void testMarkdownRowRendersOneCellPerMeasurement()
+    {
+        ReferenceRow row = new ReferenceRow(
+                "2026-08-11",
+                "#26",
+                List.of(
+                        new ReferenceRow.Measurement("128 double", 10.0, 0.1, 20.0, 0.2),
+                        new ReferenceRow.Measurement("128 int8", 5.0, 0.05, 20.0, 0.2)),
+                "desktop-5950x",
+                "AMD Ryzen 9 5950X 16-Core Processor",
+                32,
+                "25.0.1");
+        assertThat(row.toMarkdownRow())
+                .isEqualTo("| 2026-08-11 | #26 | 10.0 / 20.0 / 2.00 | 5.0 / 20.0 / 4.00 | desktop-5950x "
+                        + "| AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |");
+    }
+
+    /**
+     * The noise gate and the rendering must walk the same list. Reading a hand-written copy of the
+     * fields is how a measurement added later stops being checked without anything failing.
+     */
+    @Test
+    public void testNoiseGateCoversEveryMeasurement()
+    {
+        ReferenceRow row = new ReferenceRow(
+                "2026-08-11",
+                "#26",
+                List.of(
+                        new ReferenceRow.Measurement("clean", 10.0, 0.01, 20.0, 0.02),
+                        new ReferenceRow.Measurement("noisy", 10.0, 5.0, 20.0, 10.0)),
+                "desktop-5950x",
+                "cpu",
+                32,
+                "25.0.1");
+        assertThat(row.tooNoisyToRecord()).containsExactly("noisy");
     }
 
     @Test
@@ -115,10 +155,11 @@ public class TestReferenceRow
         ReferenceRow noisy = new ReferenceRow(
                 "2026-08-09",
                 "#11",
-                new ReferenceRow.Measurement("128 double", 91.8, 30.0, 219.0, 2.0),
-                new ReferenceRow.Measurement("128 real", 103.0, 1.0, 187.8, 60.0),
-                new ReferenceRow.Measurement("768 double", 523.3, 5.0, 859.3, 8.0),
-                new ReferenceRow.Measurement("768 real", 564.2, 5.0, 829.3, 8.0),
+                List.of(
+                        new ReferenceRow.Measurement("128 double", 91.8, 30.0, 219.0, 2.0),
+                        new ReferenceRow.Measurement("128 real", 103.0, 1.0, 187.8, 60.0),
+                        new ReferenceRow.Measurement("768 double", 523.3, 5.0, 859.3, 8.0),
+                        new ReferenceRow.Measurement("768 real", 564.2, 5.0, 829.3, 8.0)),
                 "desktop-5950x",
                 "AMD Ryzen 9 5950X 16-Core Processor",
                 32,
@@ -139,10 +180,11 @@ public class TestReferenceRow
         ReferenceRow quietHalves = new ReferenceRow(
                 "2026-08-09",
                 "#11",
-                new ReferenceRow.Measurement("128 double", 100.0, 14.0, 200.0, 28.0),
-                new ReferenceRow.Measurement("128 real", 103.0, 1.0, 187.8, 2.0),
-                new ReferenceRow.Measurement("768 double", 523.3, 5.0, 859.3, 8.0),
-                new ReferenceRow.Measurement("768 real", 564.2, 5.0, 829.3, 8.0),
+                List.of(
+                        new ReferenceRow.Measurement("128 double", 100.0, 14.0, 200.0, 28.0),
+                        new ReferenceRow.Measurement("128 real", 103.0, 1.0, 187.8, 2.0),
+                        new ReferenceRow.Measurement("768 double", 523.3, 5.0, 859.3, 8.0),
+                        new ReferenceRow.Measurement("768 real", 564.2, 5.0, 829.3, 8.0)),
                 "desktop-5950x",
                 "AMD Ryzen 9 5950X 16-Core Processor",
                 32,

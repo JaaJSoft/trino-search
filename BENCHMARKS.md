@@ -21,6 +21,16 @@ How to read this:
 - Absolute nanoseconds are comparable only between rows sharing the same `Machine` label.
 - A drift of up to 20 percent in absolutes, or up to 15 percent in a ratio, is noise rather than a
   change.
+- Ratios are comparable down a column, not across columns, and the int8 and int1 columns do not
+  move the same way as double and real. int8's kernel sums pure integer differences over the raw
+  codes, accumulated in integer lanes, with the scale applied once at the end rather than loaded
+  and multiplied on every component; at dimension 768 on this machine it is the fastest kernel of
+  the three, ahead of both `array(double)` and `array(real)`. int1's kernel, an XOR and a
+  population count, is cheaper again, which is why its ratio sits so far from the others. What
+  int8 and int1 buy beyond kernel speed is storage and scan volume at corpus scale: a billion
+  768-dimension vectors are 6.14 TB as `array(double)` against 0.77 TB quantised to int8, and
+  smaller again as binary, plus the recall floors the test suite pins; no benchmark in this file
+  reaches that scale.
 
 To record a row, from a build with Java 25:
 
@@ -44,10 +54,11 @@ scroll past unnoticed, but the failing exit status cannot. It also warns when th
 uncommitted changes, because a row names a pull request and so cannot otherwise show that it
 measured code that never reached one.
 
-| Date | PR | 128 double | 128 real | 768 double | 768 real | Machine | CPU | Cores | JDK |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 2026-08-09 | #11 | 78.0 / 162.2 / 2.08 | 86.1 / 161.5 / 1.88 | 492.9 / 685.1 / 1.39 | 506.0 / 629.2 / 1.24 | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
-| 2026-08-09 | #12 | 77.3 / 100.1 / 1.29 | 84.5 / 100.4 / 1.19 | 491.7 / 527.0 / 1.07 | 505.2 / 512.8 / 1.01 | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
-| 2026-08-09 | #13 | 40.3 / 49.9 / 1.24 | 79.6 / 95.0 / 1.19 | 185.4 / 300.6 / 1.62 | 365.5 / 371.3 / 1.02 | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
-| 2026-08-09 | #15 | 35.4 / 54.8 / 1.55 | 47.5 / 62.4 / 1.31 | 177.2 / 309.2 / 1.74 | 218.8 / 307.7 / 1.41 | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
-| 2026-08-09 | #17 | 37.4 / 42.1 / 1.13 | 54.2 / 44.8 / 0.83 | 184.5 / 55.1 / 0.30 | 249.1 / 63.3 / 0.25 | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
+| Date | PR | 128 double | 128 real | 128 int8 | 128 int1 | 768 double | 768 real | 768 int8 | 768 int1 | Machine | CPU | Cores | JDK |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-08-09 | #11 | 78.0 / 162.2 / 2.08 | 86.1 / 161.5 / 1.88 | - | - | 492.9 / 685.1 / 1.39 | 506.0 / 629.2 / 1.24 | - | - | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
+| 2026-08-09 | #12 | 77.3 / 100.1 / 1.29 | 84.5 / 100.4 / 1.19 | - | - | 491.7 / 527.0 / 1.07 | 505.2 / 512.8 / 1.01 | - | - | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
+| 2026-08-09 | #13 | 40.3 / 49.9 / 1.24 | 79.6 / 95.0 / 1.19 | - | - | 185.4 / 300.6 / 1.62 | 365.5 / 371.3 / 1.02 | - | - | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
+| 2026-08-09 | #15 | 35.4 / 54.8 / 1.55 | 47.5 / 62.4 / 1.31 | - | - | 177.2 / 309.2 / 1.74 | 218.8 / 307.7 / 1.41 | - | - | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
+| 2026-08-09 | #17 | 37.4 / 42.1 / 1.13 | 54.2 / 44.8 / 0.83 | - | - | 184.5 / 55.1 / 0.30 | 249.1 / 63.3 / 0.25 | - | - | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |
+| 2026-08-12 | #36 | 40.1 / 51.4 / 1.28 | 53.9 / 54.5 / 1.01 | 41.8 / 41.7 / 1.00 | 12.8 / 27.1 / 2.12 | 204.3 / 83.4 / 0.41 | 288.4 / 66.3 / 0.23 | 194.4 / 66.4 / 0.34 | 35.2 / 45.6 / 1.30 | desktop-5950x | AMD Ryzen 9 5950X 16-Core Processor | 32 | 25.0.1 |

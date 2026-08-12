@@ -16,10 +16,12 @@ package dev.jaaj.trino.search.vector.benchmark;
 import dev.jaaj.trino.search.vector.knn.KnnAggregation;
 import dev.jaaj.trino.search.vector.knn.KnnState;
 import dev.jaaj.trino.search.vector.knn.KnnStateFactory;
+import dev.jaaj.trino.search.vector.quantize.QuantizationBounds;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import io.trino.spi.block.Block;
 import io.trino.spi.block.LongArrayBlock;
+import io.trino.spi.block.SqlRow;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -81,6 +83,11 @@ public class BenchmarkKnnAccumulator
     private Block doubleQuery;
     private Block realQuery;
     private Slice metricSlice;
+    private Block[] int8Vectors;
+    private Slice[] binaryVectors;
+    private Block int8Query;
+    private Slice binaryQuery;
+    private SqlRow boundsRow;
 
     @Setup(Level.Trial)
     public void setUp()
@@ -92,6 +99,12 @@ public class BenchmarkKnnAccumulator
         realQuery = VectorBlocks.realVector(dataset.queries()[0]);
         metricSlice = Slices.utf8Slice(metricName);
         keys = VectorBlocks.sequentialKeys(ROWS);
+        QuantizationBounds bounds = VectorBlocks.fitBounds(dataset.base());
+        int8Vectors = VectorBlocks.int8Vectors(dataset.base(), bounds);
+        binaryVectors = VectorBlocks.binaryVectors(dataset.base(), bounds);
+        int8Query = VectorBlocks.int8Vector(dataset.queries()[0], bounds);
+        binaryQuery = VectorBlocks.binaryVector(dataset.queries()[0], bounds);
+        boundsRow = VectorBlocks.boundsRow(bounds);
     }
 
     @Benchmark
@@ -112,6 +125,30 @@ public class BenchmarkKnnAccumulator
         KnnState state = new KnnStateFactory(BIGINT).createSingleState();
         for (int i = 0; i < ROWS; i++) {
             KnnAggregation.OfRealVectors.input(state, keys, i, realVectors[i], realQuery, k, metricSlice);
+        }
+        return state.getHeap().size();
+    }
+
+    @Benchmark
+    @OperationsPerInvocation(ROWS)
+    public int int8Rows()
+    {
+        KnnState state = new KnnStateFactory(BIGINT).createSingleState();
+        for (int i = 0; i < ROWS; i++) {
+            KnnAggregation.OfQuantizedVectors.input(
+                    state, keys, i, int8Vectors[i], int8Query, boundsRow, k, metricSlice);
+        }
+        return state.getHeap().size();
+    }
+
+    @Benchmark
+    @OperationsPerInvocation(ROWS)
+    public int binaryRows()
+    {
+        KnnState state = new KnnStateFactory(BIGINT).createSingleState();
+        for (int i = 0; i < ROWS; i++) {
+            KnnAggregation.OfBinaryVectors.input(
+                    state, keys, i, binaryVectors[i], binaryQuery, k, metricSlice);
         }
         return state.getHeap().size();
     }
