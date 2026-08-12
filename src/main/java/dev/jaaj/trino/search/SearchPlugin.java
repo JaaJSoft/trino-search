@@ -15,6 +15,7 @@ package dev.jaaj.trino.search;
 
 import dev.jaaj.trino.search.vector.VectorDistanceFunctions;
 import dev.jaaj.trino.search.vector.VectorFunctions;
+import dev.jaaj.trino.search.vector.embed.EmbeddingFunctions;
 import dev.jaaj.trino.search.vector.knn.KnnAggregation;
 import dev.jaaj.trino.search.vector.quantize.BinaryDistanceFunctions;
 import dev.jaaj.trino.search.vector.quantize.QuantizeFunctions;
@@ -41,6 +42,7 @@ public class SearchPlugin
                 VectorBoundsAggregation.OfRealVectors.class,
                 QuantizeFunctions.class,
                 QuantizedDistanceFunctions.class,
-                BinaryDistanceFunctions.class);
+                BinaryDistanceFunctions.class,
+                EmbeddingFunctions.class);
     }
 }

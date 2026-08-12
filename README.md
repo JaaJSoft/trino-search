@@ -123,6 +123,47 @@ LIMIT 10;
 
 The scan reads only the codes; the exact vectors are read for the shortlist alone.
 
+### Text embeddings
+
+```sql
+to_vector_real(text, dimension, algorithm)   -> array(real)
+to_vector_double(text, dimension, algorithm) -> array(double)
+```
+
+Embeds text by feature hashing: every token is hashed to an index and a sign, and contributes one
+unit there. No model, no vocabulary and no external call, so the vector of a row depends on that
+row alone and is stable across servers and restarts. That stability holds within a plugin version
+and is not guaranteed across upgrades: a vector stored in a table should be recomputed when the
+plugin is upgraded, or compared only against vectors produced by the same version.
+
+`algorithm` is one of `'word'`, `'char_3gram'`, `'char_4gram'` or `'char_5gram'`. `'word'` splits
+on non-alphanumeric characters; the n-gram variants slide a window of that many characters, which
+tolerates typos and handles languages that do not separate words with spaces. `dimension` must be
+between 1 and 65536.
+
+The result has unit norm, so euclidean and cosine distance rank identically, with one exception:
+text containing no token returns the zero vector rather than raising, so a single empty row
+cannot fail a scan by itself. Text that is not valid UTF-8 is likewise not fatal: invalid byte
+sequences are replaced with the Unicode replacement character before tokenizing, so a row with
+corrupted encoding still embeds instead of failing the query. Text shorter than the n-gram window
+contains no token either, since no window fits in it: `to_vector_double('hi', 256, 'char_5gram')`
+is the zero vector. That zero vector still works with euclidean distance, but a zero vector has no
+direction for cosine to compare, so passing it to `cosine_similarity`, `cosine_distance` or
+`knn_agg` with the `'cosine'` metric raises "Vector magnitude cannot be zero". Filter out the
+empty and too-short rows, or use euclidean distance, if the input can contain them.
+`to_vector_fp32` and `to_vector_fp64` are aliases of the `real` and `double` forms.
+
+Feature hashing captures token overlap, not meaning: two texts sharing no word are far apart even
+if they say the same thing. It suits deduplication, tag and identifier matching, and near-duplicate
+detection, and it is not a substitute for a learned embedding model.
+
+```sql
+-- three nearest titles per category, embedded on the fly
+SELECT category, knn_agg(id, to_vector_double(title, 256, 'word'), to_vector_double('trino query engine', 256, 'word'), 3, 'euclidean')
+FROM documents
+GROUP BY category;
+```
+
 ### Aggregation
 
 ```sql

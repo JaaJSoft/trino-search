@@ -112,6 +112,14 @@ public class TestBenchmarksSmoke
     }
 
     @Test
+    public void testToVector()
+            throws RunnerException
+    {
+        smokeRun(BenchmarkToVector.class,
+                Map.of("dimension", "128", "wordCount", "8", "algorithmName", "word"));
+    }
+
+    @Test
     public void testKnnAggQuery()
             throws RunnerException
     {

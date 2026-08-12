@@ -18,6 +18,8 @@ import io.trino.spi.block.Block;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.block.DictionaryBlock;
 import io.trino.spi.block.RunLengthEncodedBlock;
+import jdk.incubator.vector.IntVector;
+import jdk.incubator.vector.LongVector;
 import org.junit.jupiter.api.Test;
 
 import static dev.jaaj.trino.search.vector.VectorReader.DOUBLE_READER;
@@ -30,6 +32,19 @@ import static org.assertj.core.api.Assertions.within;
 
 public class TestVectorMath
 {
+    /**
+     * Two whole vectors of the step the kernels actually take on the running machine, plus one
+     * component that cannot fill a third. A hardcoded length instead ties the test to an assumption
+     * about lane count that it never states: on a machine whose preferred species is wider, the
+     * loop bound falls to zero, the whole vector is read by the scalar remainder, and the test goes
+     * on passing without ever reaching the lanes it exists to pin.
+     * <p>
+     * The double kernels step by the long species and the {@code array(real)} ones by the int
+     * species, which is half as many components per step, so the two lengths differ.
+     */
+    private static final int DOUBLE_LANE_SPANNING_LENGTH = 2 * LongVector.SPECIES_PREFERRED.length() + 1;
+    private static final int REAL_LANE_SPANNING_LENGTH = 2 * IntVector.SPECIES_PREFERRED.length() + 1;
+
     private static Block doubles(Double... values)
     {
         BlockBuilder builder = DOUBLE.createBlockBuilder(null, values.length);
@@ -78,18 +93,25 @@ public class TestVectorMath
     /**
      * The counterpart of {@link #testRealVectorsWidenBeforeTheArithmetic} for the vectorised body.
      * That one passes a single component, so the whole of it runs in the scalar remainder and the
-     * widened lanes are never reached. This vector is long enough that most of it is read in
-     * whatever the widest step happens to be, with the remainder covered as well.
+     * widened lanes are never reached. This vector spans several whole steps of the wide loop with
+     * components left over for the remainder, so both are covered.
      * <p>
      * Operands within a factor of two of each other subtract exactly in float, by Sterbenz, which
      * hides the mistake this pins: the long region test above uses whole numbers and would pass
      * against lanes that subtracted as floats and widened afterwards. A constant ratio of three
      * keeps every pair outside that range.
+     * <p>
+     * The tolerance separates the two orders of magnitude that matter and nothing finer. Lanes
+     * reduced four at a time do not sum in the same order as the reference loop below, which costs
+     * a couple of last bits; subtracting in float instead of double costs seven decimal digits. A
+     * bound tight enough to reject the ordering would be asserting a bit-exact result that
+     * {@link VectorMath#euclideanSquared} does not promise, and would break on the next machine
+     * with a different lane count.
      */
     @Test
     public void testTheVectorisedRealBodyWidensBeforeSubtracting()
     {
-        int length = 37;
+        int length = REAL_LANE_SPANNING_LENGTH;
         Float[] left = new Float[length];
         Float[] right = new Float[length];
         for (int i = 0; i < length; i++) {
@@ -104,7 +126,7 @@ public class TestVectorMath
         }
 
         assertThat(VectorMath.euclideanSquared(reals(left), reals(right), REAL_READER))
-                .isCloseTo(expected, within(1e-15));
+                .isCloseTo(expected, within(1e-9));
     }
 
     @Test
@@ -134,7 +156,7 @@ public class TestVectorMath
     @Test
     public void testALongRealRegionIsReadFromItsOwnOffsetThroughout()
     {
-        int length = 37;
+        int length = REAL_LANE_SPANNING_LENGTH;
         Float[] backing = new Float[length + 5];
         for (int i = 0; i < backing.length; i++) {
             backing[i] = (float) i;
@@ -232,6 +254,113 @@ public class TestVectorMath
     {
         assertThat(VectorMath.dotProduct(doubles(1.0, 2.0), doubles(3.0, 4.0), DOUBLE_READER))
                 .isCloseTo(11.0, within(1e-12));
+    }
+
+    /**
+     * The counterpart of {@link #testTheVectorisedRealBodyWidensBeforeSubtracting} for the dot
+     * product: components are read as floats and multiplied in double, so a body that multiplied
+     * the float lanes and widened the product afterwards would answer a different question.
+     * <p>
+     * Whole numbers would hide it, since their products are exact in float. A tenth and three
+     * tenths are not, and neither is their product, so every term here separates the two orders.
+     */
+    @Test
+    public void testTheVectorisedRealDotProductWidensBeforeMultiplying()
+    {
+        int length = REAL_LANE_SPANNING_LENGTH;
+        Float[] left = new Float[length];
+        Float[] right = new Float[length];
+        for (int i = 0; i < length; i++) {
+            left[i] = 0.1f * (i + 1);
+            right[i] = 0.3f * (i + 1);
+        }
+
+        double expected = 0;
+        for (int i = 0; i < length; i++) {
+            expected += (double) (float) (0.1f * (i + 1)) * (double) (float) (0.3f * (i + 1));
+        }
+
+        assertThat(VectorMath.dotProduct(reals(left), reals(right), REAL_READER))
+                .isCloseTo(expected, within(1e-9));
+    }
+
+    /**
+     * A vector spanning several whole steps of the wide loop with components left over for the
+     * remainder, cut as a region so that it starts partway into a shared backing array. Dropping
+     * the tail and reading from index zero are the two mistakes a raw-array fast path makes, and
+     * each changes the answer here.
+     */
+    @Test
+    public void testALongDotProductRegionIsReadFromItsOwnOffsetThroughout()
+    {
+        int length = DOUBLE_LANE_SPANNING_LENGTH;
+        Double[] backing = new Double[length + 5];
+        for (int i = 0; i < backing.length; i++) {
+            backing[i] = (double) i;
+        }
+        Block region = doubles(backing).getRegion(5, length);
+
+        Double[] ones = new Double[length];
+        java.util.Arrays.fill(ones, 1.0);
+        double sum = 0;
+        double sumOfSquares = 0;
+        Double[] same = new Double[length];
+        for (int i = 0; i < length; i++) {
+            same[i] = (double) (i + 5);
+            sum += i + 5;
+            sumOfSquares += (double) (i + 5) * (i + 5);
+        }
+
+        assertThat(VectorMath.dotProduct(region, doubles(ones), DOUBLE_READER))
+                .isCloseTo(sum, within(1e-9));
+        assertThat(VectorMath.dotProduct(region, doubles(same), DOUBLE_READER))
+                .isCloseTo(sumOfSquares, within(1e-9));
+    }
+
+    @Test
+    public void testALongRealDotProductRegionIsReadFromItsOwnOffsetThroughout()
+    {
+        int length = REAL_LANE_SPANNING_LENGTH;
+        Float[] backing = new Float[length + 5];
+        for (int i = 0; i < backing.length; i++) {
+            backing[i] = (float) i;
+        }
+        Block region = reals(backing).getRegion(5, length);
+
+        Float[] ones = new Float[length];
+        java.util.Arrays.fill(ones, 1.0f);
+        double sum = 0;
+        double sumOfSquares = 0;
+        Float[] same = new Float[length];
+        for (int i = 0; i < length; i++) {
+            same[i] = (float) (i + 5);
+            sum += i + 5;
+            sumOfSquares += (double) (i + 5) * (i + 5);
+        }
+
+        assertThat(VectorMath.dotProduct(region, reals(ones), REAL_READER))
+                .isCloseTo(sum, within(1e-9));
+        assertThat(VectorMath.dotProduct(region, reals(same), REAL_READER))
+                .isCloseTo(sumOfSquares, within(1e-9));
+    }
+
+    @Test
+    public void testADictionaryEncodedRealVectorDotProductIsReadThroughItsPositions()
+    {
+        Block dictionary = reals(9.0f, 3.0f, 4.0f, 7.0f);
+        Block vector = DictionaryBlock.create(2, dictionary, new int[] {1, 2});
+
+        assertThat(VectorMath.dotProduct(vector, reals(1.0f, 1.0f), REAL_READER))
+                .isCloseTo(7.0, within(1e-9));
+    }
+
+    @Test
+    public void testARunLengthEncodedRealVectorDotProductIsReadThroughItsPositions()
+    {
+        Block vector = RunLengthEncodedBlock.create(reals(2.0f), 3);
+
+        assertThat(VectorMath.dotProduct(vector, reals(1.0f, 1.0f, 1.0f), REAL_READER))
+                .isCloseTo(6.0, within(1e-9));
     }
 
     @Test
@@ -400,14 +529,14 @@ public class TestVectorMath
 
     /**
      * The region above is too short to reach a wide loop, which would leave the offset applied
-     * only on the one-component-at-a-time tail. This one is long enough that most of it is read in
+     * only on the one-component-at-a-time tail. This one spans several whole steps of it, read in
      * whatever the widest step happens to be on the running machine, and every component differs
      * from its neighbour so that starting even one position early changes the answer.
      */
     @Test
     public void testALongRegionIsReadFromItsOwnOffsetThroughout()
     {
-        int length = 37;
+        int length = DOUBLE_LANE_SPANNING_LENGTH;
         Double[] backing = new Double[length + 5];
         for (int i = 0; i < backing.length; i++) {
             backing[i] = (double) i;
