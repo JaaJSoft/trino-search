@@ -18,6 +18,7 @@ import io.trino.spi.block.ByteArrayBlock;
 import io.trino.spi.block.DictionaryBlock;
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
 import java.util.Optional;
 import java.util.SplittableRandom;
 
@@ -84,6 +85,57 @@ public class TestQuantizedVectorMath
     {
         QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, 2.0);
         assertThat(QuantizedVectorMath.manhattan(codes(0, 0), codes(3, -4), bounds)).isEqualTo(6.0 + 8.0);
+    }
+
+    private static double referenceManhattan(Block first, Block second, QuantizationBounds bounds)
+    {
+        double sum = 0;
+        for (int i = 0; i < first.getPositionCount(); i++) {
+            sum += Math.abs(bounds.decode(i, TINYINT.getByte(first, i)) - bounds.decode(i, TINYINT.getByte(second, i)));
+        }
+        return sum;
+    }
+
+    /**
+     * The fitted scale a real corpus produces is never negative, but a user-written bounds row is
+     * not restricted to one: {@code (max - min) / CODE_LEVELS} only holds for bounds
+     * {@code vector_bounds_agg} fitted itself. Multiplying by the scale rather than its absolute
+     * value would sum {@code scale * |diff|} instead of {@code |scale * diff|}, which is negative
+     * here and disagrees with the dequantise-then-compute reference.
+     */
+    @Test
+    public void testManhattanMatchesTheDequantiseThenComputeReferenceWithANegativeScale()
+    {
+        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, -2.0);
+        Block first = codes(0, 0);
+        Block second = codes(3, -4);
+        assertThat(QuantizedVectorMath.manhattan(first, second, bounds))
+                .isCloseTo(referenceManhattan(first, second, bounds), within(1e-9));
+    }
+
+    @Test
+    public void testManhattanMatchesTheDequantiseThenComputeReferenceOverRandomVectors()
+    {
+        SplittableRandom random = new SplittableRandom(43);
+        int dimension = 200;
+        double[] offsets = new double[dimension];
+        for (int i = 0; i < dimension; i++) {
+            offsets[i] = random.nextDouble(-5, 5);
+        }
+        QuantizationBounds bounds = QuantizationBounds.forTesting(offsets, random.nextDouble(-0.5, 0.5));
+
+        for (int trial = 0; trial < 20; trial++) {
+            int[] left = new int[dimension];
+            int[] right = new int[dimension];
+            for (int i = 0; i < dimension; i++) {
+                left[i] = random.nextInt(-128, 128);
+                right[i] = random.nextInt(-128, 128);
+            }
+            Block first = codes(left);
+            Block second = codes(right);
+            assertThat(QuantizedVectorMath.manhattan(first, second, bounds))
+                    .isCloseTo(referenceManhattan(first, second, bounds), within(1e-9));
+        }
     }
 
     @Test
@@ -296,5 +348,30 @@ public class TestQuantizedVectorMath
                     .as("dimension %s", dimension)
                     .isCloseTo(referenceEuclideanSquared(first, second, bounds), within(1e-9));
         }
+    }
+
+    /**
+     * Every component maximally distant, at a dimension chosen well past the point where a plain
+     * {@code int} accumulator wraps: each squared difference is {@code 255 * 255 = 65025}, so a
+     * running sum in a 32-bit lane overflows past roughly 33000 components, turning this distance
+     * negative if nothing folds the partial sums into a wider accumulator first. The expected value
+     * is exact integer arithmetic representable in a double well within its 53-bit mantissa, so an
+     * exact comparison is meaningful here rather than one within a tolerance.
+     */
+    @Test
+    public void testEuclideanSquaredDoesNotOverflowPastThirtyThreeThousandComponents()
+    {
+        int dimension = 400_000;
+        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[dimension], 1.0);
+
+        byte[] leftBytes = new byte[dimension];
+        byte[] rightBytes = new byte[dimension];
+        Arrays.fill(leftBytes, (byte) -128);
+        Arrays.fill(rightBytes, (byte) 127);
+        Block first = new ByteArrayBlock(dimension, Optional.empty(), leftBytes);
+        Block second = new ByteArrayBlock(dimension, Optional.empty(), rightBytes);
+
+        double expected = (double) dimension * 255.0 * 255.0;
+        assertThat(QuantizedVectorMath.euclideanSquared(first, second, bounds)).isEqualTo(expected);
     }
 }
