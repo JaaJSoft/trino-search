@@ -25,8 +25,8 @@ public class TestQuantizedDistanceQueries
         extends AbstractTestQueryFramework
 {
     private static final String UNIT_BOUNDS =
-            "CAST(ROW(ARRAY[CAST(0.0 AS DOUBLE), CAST(0.0 AS DOUBLE)], ARRAY[CAST(1.0 AS DOUBLE), CAST(1.0 AS DOUBLE)]) "
-                    + "AS row(offsets array(double), scales array(double)))";
+            "CAST(ROW(ARRAY[CAST(0.0 AS DOUBLE), CAST(0.0 AS DOUBLE)], CAST(1.0 AS DOUBLE)) "
+                    + "AS row(offsets array(double), scale double))";
     private static final String ORIGIN = "ARRAY[CAST(0 AS TINYINT), CAST(0 AS TINYINT)]";
     private static final String THREE_FOUR = "ARRAY[CAST(3 AS TINYINT), CAST(4 AS TINYINT)]";
 
@@ -107,12 +107,12 @@ public class TestQuantizedDistanceQueries
      * The bounds argument is not optional on code arrays, and there is nothing in the type system
      * that can enforce it: array(tinyint) coerces implicitly to the float vector types, so a
      * two-argument call compiles, binds to an exact-vector overload and computes on the raw codes
-     * with no scales at all. This pins that the trap exists and is silent, which is what makes it a
+     * with no scale at all. This pins that the trap exists and is silent, which is what makes it a
      * trap; which of the two float overloads it lands on is not observable from here, since a code
      * widens to the same value through either reader and both kernels accumulate in double.
      */
     @Test
-    public void testTwoArgumentCallOnCodeArraysComputesOnTheRawCodesWithNoScales()
+    public void testTwoArgumentCallOnCodeArraysComputesOnTheRawCodesWithNoScale()
     {
         assertQuery(
                 "SELECT euclidean_squared_distance(" + ORIGIN + ", " + THREE_FOUR + ")",

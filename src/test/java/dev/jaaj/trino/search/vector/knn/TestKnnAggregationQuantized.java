@@ -25,11 +25,11 @@ public class TestKnnAggregationQuantized
         extends AbstractTestQueryFramework
 {
     private static final String UNIT_BOUNDS =
-            "CAST(ROW(ARRAY[CAST(0.0 AS DOUBLE)], ARRAY[CAST(1.0 AS DOUBLE)]) "
-                    + "AS row(offsets array(double), scales array(double)))";
+            "CAST(ROW(ARRAY[CAST(0.0 AS DOUBLE)], CAST(1.0 AS DOUBLE)) "
+                    + "AS row(offsets array(double), scale double))";
     private static final String TWO_DIMENSION_BOUNDS =
-            "CAST(ROW(ARRAY[CAST(0.0 AS DOUBLE), CAST(0.0 AS DOUBLE)], ARRAY[CAST(1.0 AS DOUBLE), CAST(1.0 AS DOUBLE)]) "
-                    + "AS row(offsets array(double), scales array(double)))";
+            "CAST(ROW(ARRAY[CAST(0.0 AS DOUBLE), CAST(0.0 AS DOUBLE)], CAST(1.0 AS DOUBLE)) "
+                    + "AS row(offsets array(double), scale double))";
 
     @Override
     protected QueryRunner createQueryRunner()

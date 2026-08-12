@@ -16,10 +16,8 @@ package dev.jaaj.trino.search.vector.quantize;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
 import io.trino.spi.block.ByteArrayBlock;
-import io.trino.spi.block.LongArrayBlock;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.DoubleVector;
-import jdk.incubator.vector.LongVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
 
@@ -43,7 +41,6 @@ public final class QuantizedVectorMath
 
     private static final VectorSpecies<Byte> BYTE_SPECIES = ByteVector.SPECIES_PREFERRED;
     private static final VectorSpecies<Double> DOUBLE_SPECIES = DoubleVector.SPECIES_PREFERRED;
-    private static final VectorSpecies<Long> LONG_SPECIES = LongVector.SPECIES_PREFERRED;
 
     /**
      * How many double vectors one byte vector's worth of components widens into. Both species are
@@ -81,21 +78,12 @@ public final class QuantizedVectorMath
         // Only a plain ByteArrayBlock stores a vector's components contiguously and in order. A
         // dictionary block maps position i somewhere else in a shared array and a run-length block
         // holds a single component, so indexing their backing arrays would compute a distance
-        // between vectors nobody asked for. The scales are read the same way, as the raw double
-        // bits behind an array(double) element block.
-        //
-        // Nothing upstream checks the bounds against the vectors' length, only the two vectors
-        // against each other: a short bounds array is caught by the scalar path's block accessor
-        // throwing on an out-of-range position, so the fast path has to fail the same way rather
-        // than reading past the end of the raw long[] it indexes directly.
+        // between vectors nobody asked for.
         if (first instanceof ByteArrayBlock left
                 && second instanceof ByteArrayBlock right
-                && bounds.scales() instanceof LongArrayBlock scales
                 && !left.mayHaveNull()
-                && !right.mayHaveNull()
-                && !scales.mayHaveNull()
-                && scales.getPositionCount() >= first.getPositionCount()) {
-            return euclideanSquaredVectorized(left, right, scales, limit);
+                && !right.mayHaveNull()) {
+            return euclideanSquaredVectorized(left, right, bounds.scale(), limit);
         }
         return euclideanSquaredUnrolled(first, second, bounds, limit);
     }
@@ -113,17 +101,16 @@ public final class QuantizedVectorMath
     private static double euclideanSquaredVectorized(
             ByteArrayBlock first,
             ByteArrayBlock second,
-            LongArrayBlock scaleBits,
+            double scale,
             double limit)
     {
         byte[] leftCodes = first.getRawValues();
         byte[] rightCodes = second.getRawValues();
         int leftBase = first.getRawValuesOffset();
         int rightBase = second.getRawValuesOffset();
-        long[] scales = scaleBits.getRawValues();
-        int scaleBase = scaleBits.getRawValuesOffset();
         int length = first.getPositionCount();
 
+        DoubleVector scaleVector = DoubleVector.broadcast(DOUBLE_SPECIES, scale);
         DoubleVector sum = DoubleVector.zero(DOUBLE_SPECIES);
         int lanes = BYTE_SPECIES.length();
         int vectorized = BYTE_SPECIES.loopBound(length);
@@ -137,19 +124,12 @@ public final class QuantizedVectorMath
                 // Part p of a widened byte vector covers DOUBLE_SPECIES.length() consecutive
                 // components starting at offset p * DOUBLE_SPECIES.length() within the byte vector's
                 // own lanes, exactly as VectorMath's array(real) kernel widens an int vector with
-                // F2D. The matching scales sit at that same offset from the current position i, since
-                // the scale array and the code arrays advance together one component at a time. Off
-                // by one part here pairs every difference with the wrong dimension's scale while
-                // still producing a plausible-looking number, which is why the per-dimension-scale
-                // test exists.
+                // F2D.
                 for (int part = 0; part < WIDENING_PARTS; part++) {
                     DoubleVector difference =
                             ((DoubleVector) left.convertShape(VectorOperators.B2D, DOUBLE_SPECIES, part))
                                     .sub((DoubleVector) right.convertShape(VectorOperators.B2D, DOUBLE_SPECIES, part));
-                    DoubleVector scale = LongVector
-                            .fromArray(LONG_SPECIES, scales, scaleBase + i + part * DOUBLE_SPECIES.length())
-                            .reinterpretAsDoubles();
-                    DoubleVector scaled = difference.mul(scale);
+                    DoubleVector scaled = difference.mul(scaleVector);
                     sum = scaled.fma(scaled, sum);
                 }
             }
@@ -160,8 +140,7 @@ public final class QuantizedVectorMath
 
         double total = sum.reduceLanes(VectorOperators.ADD);
         for (; i < length; i++) {
-            double difference = (leftCodes[leftBase + i] - rightCodes[rightBase + i])
-                    * Double.longBitsToDouble(scales[scaleBase + i]);
+            double difference = (leftCodes[leftBase + i] - rightCodes[rightBase + i]) * scale;
             total += difference * difference;
         }
         return total;
@@ -219,7 +198,7 @@ public final class QuantizedVectorMath
      */
     private static double scaledDifference(Block first, Block second, QuantizationBounds bounds, int i)
     {
-        return (TINYINT.getByte(first, i) - TINYINT.getByte(second, i)) * bounds.scale(i);
+        return (TINYINT.getByte(first, i) - TINYINT.getByte(second, i)) * bounds.scale();
     }
 
     /**

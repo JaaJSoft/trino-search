@@ -25,16 +25,16 @@ import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static io.trino.spi.type.DoubleType.DOUBLE;
 
 /**
- * The fitted quantisation parameters, as a read-only view onto the two arrays a
- * {@code vector_bounds_agg} row carries.
+ * The fitted quantisation parameters, as a read-only view onto the offsets array and the single
+ * scale a {@code vector_bounds_agg} row carries.
  * <p>
- * The blocks are wrapped rather than copied. A scalar receives this row once per input row, so
- * copying two {@code double[dimension]} arrays out of it would cost more per row at dimension 768
+ * The offsets block is wrapped rather than copied. A scalar receives this row once per input row,
+ * so copying a {@code double[dimension]} array out of it would cost more per row at dimension 768
  * than the distance the caller is trying to compute.
  */
 public final class QuantizationBounds
 {
-    public static final String BOUNDS_TYPE_SIGNATURE = "row(offsets array(double), scales array(double))";
+    public static final String BOUNDS_TYPE_SIGNATURE = "row(offsets array(double), scale double)";
 
     private static final ArrayType DOUBLE_ARRAY = new ArrayType(DOUBLE);
 
@@ -47,28 +47,25 @@ public final class QuantizationBounds
     public static final int CODE_LEVELS = 255;
 
     private final Block offsets;
-    private final Block scales;
+    private final double scale;
 
-    private QuantizationBounds(Block offsets, Block scales)
+    private QuantizationBounds(Block offsets, double scale)
     {
         this.offsets = offsets;
-        this.scales = scales;
+        this.scale = scale;
     }
 
     public static QuantizationBounds of(SqlRow row)
     {
         int index = row.getRawIndex();
         Block offsets = DOUBLE_ARRAY.getObject(row.getRawFieldBlock(0), index);
-        Block scales = DOUBLE_ARRAY.getObject(row.getRawFieldBlock(1), index);
-        if (offsets.getPositionCount() != scales.getPositionCount()) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "The quantisation bounds must have the same length");
-        }
-        return new QuantizationBounds(offsets, scales);
+        double scale = DOUBLE.getDouble(row.getRawFieldBlock(1), index);
+        return new QuantizationBounds(offsets, scale);
     }
 
-    public static QuantizationBounds forTesting(double[] offsets, double[] scales)
+    public static QuantizationBounds forTesting(double[] offsets, double scale)
     {
-        return new QuantizationBounds(doubleBlock(offsets), doubleBlock(scales));
+        return new QuantizationBounds(doubleBlock(offsets), scale);
     }
 
     private static Block doubleBlock(double[] values)
@@ -90,19 +87,14 @@ public final class QuantizationBounds
         return offsets;
     }
 
-    public Block scales()
+    public double scale()
     {
-        return scales;
+        return scale;
     }
 
     public double offset(int i)
     {
         return DOUBLE.getDouble(offsets, i);
-    }
-
-    public double scale(int i)
-    {
-        return DOUBLE.getDouble(scales, i);
     }
 
     /**
@@ -115,7 +107,6 @@ public final class QuantizationBounds
      */
     public byte encode(int i, double value)
     {
-        double scale = scale(i);
         if (scale == 0) {
             return 0;
         }
@@ -125,7 +116,7 @@ public final class QuantizationBounds
 
     public double decode(int i, byte code)
     {
-        return offset(i) + code * scale(i);
+        return offset(i) + code * scale;
     }
 
     public void checkDimension(int length)

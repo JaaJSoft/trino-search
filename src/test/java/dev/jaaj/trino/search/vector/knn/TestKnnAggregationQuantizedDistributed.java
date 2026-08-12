@@ -38,12 +38,12 @@ public class TestKnnAggregationQuantizedDistributed
         extends AbstractTestQueryFramework
 {
     private static final String UNIT_BOUNDS_1D =
-            "CAST(ROW(ARRAY[CAST(0.0 AS DOUBLE)], ARRAY[CAST(1.0 AS DOUBLE)]) "
-                    + "AS row(offsets array(double), scales array(double)))";
+            "CAST(ROW(ARRAY[CAST(0.0 AS DOUBLE)], CAST(1.0 AS DOUBLE)) "
+                    + "AS row(offsets array(double), scale double))";
 
     private static final String UNIT_BOUNDS_3D =
-            "CAST(ROW(repeat(CAST(0.0 AS DOUBLE), 3), repeat(CAST(1.0 AS DOUBLE), 3)) "
-                    + "AS row(offsets array(double), scales array(double)))";
+            "CAST(ROW(repeat(CAST(0.0 AS DOUBLE), 3), CAST(1.0 AS DOUBLE)) "
+                    + "AS row(offsets array(double), scale double))";
 
     /**
      * orderkey reduced modulo 100 and centred on zero, so every quantised code round-trips exactly

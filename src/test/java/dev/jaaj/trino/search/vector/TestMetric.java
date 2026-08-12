@@ -22,7 +22,6 @@ import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.block.ByteArrayBlock;
 import org.junit.jupiter.api.Test;
 
-import java.util.Arrays;
 import java.util.Optional;
 
 import static dev.jaaj.trino.search.vector.VectorReader.DOUBLE_READER;
@@ -157,7 +156,7 @@ public class TestMetric
     @Test
     public void testEveryMetricComputesOnQuantisedCodes()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, new double[] {1, 1});
+        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, 1.0);
         Block origin = quantizedCodes(0, 0);
         Block threeFour = quantizedCodes(3, 4);
 
@@ -175,7 +174,7 @@ public class TestMetric
     @Test
     public void testASignedMetricIgnoresTheLimitOnQuantisedCodes()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, new double[] {1, 1});
+        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, 1.0);
         Block first = quantizedCodes(-100, 1);
         Block second = quantizedCodes(1, 1);
 
@@ -194,9 +193,7 @@ public class TestMetric
 
     private static QuantizationBounds unitBounds(int length)
     {
-        double[] scales = new double[length];
-        Arrays.fill(scales, 1.0);
-        return QuantizationBounds.forTesting(new double[length], scales);
+        return QuantizationBounds.forTesting(new double[length], 1.0);
     }
 
     /**

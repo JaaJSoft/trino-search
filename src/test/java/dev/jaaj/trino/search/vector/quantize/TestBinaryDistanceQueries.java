@@ -125,8 +125,8 @@ public class TestBinaryDistanceQueries
                     quantize_vector_varbinary(CAST(ARRAY[1.0, -1.0] AS array(double)), b))
                 FROM (
                     SELECT CAST(ROW(ARRAY[CAST(0.0 AS DOUBLE), CAST(0.0 AS DOUBLE)],
-                                    ARRAY[CAST(1.0 AS DOUBLE), CAST(1.0 AS DOUBLE)])
-                        AS row(offsets array(double), scales array(double))) AS b
+                                    CAST(1.0 AS DOUBLE))
+                        AS row(offsets array(double), scale double)) AS b
                 )
                 """,
                 "SELECT CAST(1 AS BIGINT)");

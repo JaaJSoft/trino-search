@@ -25,12 +25,12 @@ public class TestQuantizeFunctionQueries
         extends AbstractTestQueryFramework
 {
     /**
-     * Offsets 0 and scales 1, so a code is the value itself and the expected numbers can be read
+     * Offsets 0 and scale 1, so a code is the value itself and the expected numbers can be read
      * without doing the arithmetic in one's head.
      */
     private static final String UNIT_BOUNDS =
-            "CAST(ROW(ARRAY[CAST(0.0 AS DOUBLE), CAST(0.0 AS DOUBLE)], ARRAY[CAST(1.0 AS DOUBLE), CAST(1.0 AS DOUBLE)]) "
-                    + "AS row(offsets array(double), scales array(double)))";
+            "CAST(ROW(ARRAY[CAST(0.0 AS DOUBLE), CAST(0.0 AS DOUBLE)], CAST(1.0 AS DOUBLE)) "
+                    + "AS row(offsets array(double), scale double))";
 
     @Override
     protected QueryRunner createQueryRunner()

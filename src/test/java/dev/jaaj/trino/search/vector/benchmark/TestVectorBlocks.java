@@ -90,12 +90,14 @@ public class TestVectorBlocks
         double[][] vectors = {{-1.0, 5.0}, {3.0, 5.0}};
         QuantizationBounds bounds = VectorBlocks.fitBounds(vectors);
         assertThat(bounds.offset(0)).isEqualTo(1.0);
-        assertThat(bounds.scale(0)).isEqualTo(4.0 / 255.0);
-        assertThat(bounds.scale(1)).isEqualTo(0.0);
+        assertThat(bounds.offset(1)).isEqualTo(5.0);
+        // The global range spans both dimensions: -1 to 5, since dimension 1 never varies and
+        // dimension 0 alone would understate it.
+        assertThat(bounds.scale()).isEqualTo(6.0 / 255.0);
     }
 
     /**
-     * The harness derives the offset and the scale itself, so the hand-computed values above only
+     * The harness derives the offsets and the scale itself, so the hand-computed values above only
      * say that its own arithmetic is what it was written to be. Recall measured against parameters
      * no user would ever be given is not recall, so the derivation is pinned against the one
      * {@code vector_bounds_agg} actually produces.
@@ -108,9 +110,9 @@ public class TestVectorBlocks
         QuantizationBounds aggregated = throughVectorBoundsAgg(vectors);
 
         assertThat(harness.dimension()).isEqualTo(aggregated.dimension());
+        assertThat(harness.scale()).isEqualTo(aggregated.scale());
         for (int i = 0; i < aggregated.dimension(); i++) {
             assertThat(harness.offset(i)).as("offset %s", i).isEqualTo(aggregated.offset(i));
-            assertThat(harness.scale(i)).as("scale %s", i).isEqualTo(aggregated.scale(i));
         }
     }
 
@@ -121,7 +123,7 @@ public class TestVectorBlocks
             VectorBoundsAggregation.OfDoubleVectors.input(state, VectorBlocks.doubleVector(vector));
         }
         ArrayType doubleArray = new ArrayType(DOUBLE);
-        RowType rowType = RowType.anonymous(List.of(doubleArray, doubleArray));
+        RowType rowType = RowType.anonymous(List.of(doubleArray, DOUBLE));
         BlockBuilder out = rowType.createBlockBuilder(null, 1);
         VectorBoundsAggregation.OfDoubleVectors.output(state, out);
         return QuantizationBounds.of(rowType.getObject(out.build(), 0));
@@ -130,7 +132,7 @@ public class TestVectorBlocks
     @Test
     public void testInt8VectorEncodesAgainstTheBounds()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0.0}, new double[] {1.0});
+        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0.0}, 1.0);
         Block codes = VectorBlocks.int8Vector(new double[] {7.0}, bounds);
         assertThat(codes.getPositionCount()).isEqualTo(1);
         assertThat(TINYINT.getByte(codes, 0)).isEqualTo((byte) 7);
@@ -139,7 +141,7 @@ public class TestVectorBlocks
     @Test
     public void testBinaryVectorSetsABitPerComponentAboveTheMidpoint()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0.0, 0.0}, new double[] {1.0, 1.0});
+        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0.0, 0.0}, 1.0);
         Slice codes = VectorBlocks.binaryVector(new double[] {1.0, -1.0}, bounds);
         assertThat(BinaryCodes.dimension(codes)).isEqualTo(2);
         assertThat(BinaryCodes.hamming(codes, VectorBlocks.binaryVector(new double[] {1.0, 1.0}, bounds)))

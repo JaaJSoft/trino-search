@@ -136,12 +136,15 @@ public final class VectorBlocks
         }
 
         double[] offsets = new double[dimension];
-        double[] scales = new double[dimension];
+        double globalMinimum = Double.POSITIVE_INFINITY;
+        double globalMaximum = Double.NEGATIVE_INFINITY;
         for (int i = 0; i < dimension; i++) {
             offsets[i] = (minimums[i] + maximums[i]) / 2;
-            scales[i] = (maximums[i] - minimums[i]) / QuantizationBounds.CODE_LEVELS;
+            globalMinimum = Math.min(globalMinimum, minimums[i]);
+            globalMaximum = Math.max(globalMaximum, maximums[i]);
         }
-        return QuantizationBounds.forTesting(offsets, scales);
+        double scale = (globalMaximum - globalMinimum) / QuantizationBounds.CODE_LEVELS;
+        return QuantizationBounds.forTesting(offsets, scale);
     }
 
     /**
@@ -151,7 +154,7 @@ public final class VectorBlocks
     public static SqlRow boundsRow(QuantizationBounds bounds)
     {
         ArrayType doubleArray = new ArrayType(DOUBLE);
-        RowType rowType = RowType.anonymous(List.of(doubleArray, doubleArray));
+        RowType rowType = RowType.anonymous(List.of(doubleArray, DOUBLE));
         RowBlockBuilder builder = (RowBlockBuilder) rowType.createBlockBuilder(null, 1);
         builder.buildEntry(fieldBuilders -> {
             ((ArrayBlockBuilder) fieldBuilders.get(0)).buildEntry(elementBuilder -> {
@@ -159,11 +162,7 @@ public final class VectorBlocks
                     DOUBLE.writeDouble(elementBuilder, bounds.offset(i));
                 }
             });
-            ((ArrayBlockBuilder) fieldBuilders.get(1)).buildEntry(elementBuilder -> {
-                for (int i = 0; i < bounds.dimension(); i++) {
-                    DOUBLE.writeDouble(elementBuilder, bounds.scale(i));
-                }
-            });
+            DOUBLE.writeDouble(fieldBuilders.get(1), bounds.scale());
         });
         return rowType.getObject(builder.build(), 0);
     }

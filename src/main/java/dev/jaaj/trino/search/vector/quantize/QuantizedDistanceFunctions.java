@@ -25,10 +25,9 @@ import io.trino.spi.type.StandardTypes;
  * Distances between two vectors of one-byte codes.
  * <p>
  * The bounds are the third argument rather than folded into the codes because ranking on the raw
- * codes would be a reweighted metric, with every dimension implicitly scaled by the reciprocal of
- * its own scale. For euclidean that only matters when the scales differ between dimensions; for
- * cosine it is fatal, since cosine is not translation-invariant and a non-zero offset moves the
- * angle.
+ * codes would be a reweighted metric, with every component implicitly scaled by the reciprocal of
+ * the fitted scale. For cosine that is fatal rather than a rescaling, since cosine is not
+ * translation-invariant and a non-zero offset moves the angle.
  * <p>
  * Both operands must have been fitted against the bounds passed. Nothing here can check that.
  */

@@ -32,17 +32,17 @@ import static dev.jaaj.trino.search.vector.VectorReader.REAL_READER;
 import static io.trino.spi.type.DoubleType.DOUBLE;
 
 /**
- * Fits per-dimension quantisation parameters over a corpus in one pass.
+ * Fits per-dimension quantisation offsets and a single global scale over a corpus in one pass.
  * <p>
  * The state keeps the minima and maxima, because that is what merges associatively across splits.
- * The offset and scale the kernels want are derived once, at output.
+ * The offsets and the scale the kernels want are derived once, at output.
  */
 public final class VectorBoundsAggregation
 {
     private VectorBoundsAggregation() {}
 
     @AggregationFunction("vector_bounds_agg")
-    @Description("Fits per-dimension quantisation bounds over a corpus of vectors")
+    @Description("Fits per-dimension offsets and a single global scale for quantisation over a corpus of vectors")
     public static final class OfDoubleVectors
     {
         private OfDoubleVectors() {}
@@ -68,7 +68,7 @@ public final class VectorBoundsAggregation
     }
 
     @AggregationFunction("vector_bounds_agg")
-    @Description("Fits per-dimension quantisation bounds over a corpus of vectors")
+    @Description("Fits per-dimension offsets and a single global scale for quantisation over a corpus of vectors")
     public static final class OfRealVectors
     {
         private OfRealVectors() {}
@@ -125,17 +125,20 @@ public final class VectorBoundsAggregation
             return;
         }
         double[] maximums = state.getMaximums();
+        double globalMinimum = Double.POSITIVE_INFINITY;
+        double globalMaximum = Double.NEGATIVE_INFINITY;
+        for (int i = 0; i < minimums.length; i++) {
+            globalMinimum = Math.min(globalMinimum, minimums[i]);
+            globalMaximum = Math.max(globalMaximum, maximums[i]);
+        }
+        double scale = (globalMaximum - globalMinimum) / QuantizationBounds.CODE_LEVELS;
         ((RowBlockBuilder) out).buildEntry(fieldBuilders -> {
             ((ArrayBlockBuilder) fieldBuilders.get(0)).buildEntry(elementBuilder -> {
                 for (int i = 0; i < minimums.length; i++) {
                     DOUBLE.writeDouble(elementBuilder, (minimums[i] + maximums[i]) / 2);
                 }
             });
-            ((ArrayBlockBuilder) fieldBuilders.get(1)).buildEntry(elementBuilder -> {
-                for (int i = 0; i < minimums.length; i++) {
-                    DOUBLE.writeDouble(elementBuilder, (maximums[i] - minimums[i]) / QuantizationBounds.CODE_LEVELS);
-                }
-            });
+            DOUBLE.writeDouble(fieldBuilders.get(1), scale);
         });
     }
 }

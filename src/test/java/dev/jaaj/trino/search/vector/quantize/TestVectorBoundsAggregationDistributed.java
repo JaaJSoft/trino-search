@@ -78,7 +78,7 @@ public class TestVectorBoundsAggregationDistributed
     {
         MaterializedResult actual = computeActual(
                 """
-                SELECT b.offsets[1], b.scales[1]
+                SELECT b.offsets[1], b.scale
                 FROM (SELECT vector_bounds_agg(v) AS b FROM %s)
                 """.formatted(VECTORS));
         MaterializedResult expected = computeActual(

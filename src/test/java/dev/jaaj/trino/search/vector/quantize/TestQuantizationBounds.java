@@ -22,7 +22,7 @@ public class TestQuantizationBounds
     @Test
     public void testMidpointEncodesToZero()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0.0}, new double[] {1.0});
+        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0.0}, 1.0);
         assertThat(bounds.encode(0, 0.0)).isEqualTo((byte) 0);
     }
 
@@ -34,7 +34,7 @@ public class TestQuantizationBounds
     @Test
     public void testValuesOutsideTheBoundsClampInsteadOfWrapping()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0.0}, new double[] {1.0});
+        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0.0}, 1.0);
         assertThat(bounds.encode(0, 10_000.0)).isEqualTo((byte) 127);
         assertThat(bounds.encode(0, -10_000.0)).isEqualTo((byte) -128);
     }
@@ -46,7 +46,7 @@ public class TestQuantizationBounds
     @Test
     public void testConstantDimensionEncodesToZeroAndDecodesToTheOffset()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {4.5}, new double[] {0.0});
+        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {4.5}, 0.0);
         assertThat(bounds.encode(0, 4.5)).isEqualTo((byte) 0);
         assertThat(bounds.encode(0, 99.0)).isEqualTo((byte) 0);
         assertThat(bounds.decode(0, (byte) 0)).isEqualTo(4.5);
@@ -57,7 +57,7 @@ public class TestQuantizationBounds
     {
         double offset = 0.5;
         double scale = 2.0 / 255.0;
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {offset}, new double[] {scale});
+        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {offset}, scale);
         for (double value = -0.5; value <= 1.5; value += 0.01) {
             double roundTripped = bounds.decode(0, bounds.encode(0, value));
             assertThat(Math.abs(roundTripped - value)).isLessThanOrEqualTo(scale / 2 + 1e-12);
@@ -67,7 +67,7 @@ public class TestQuantizationBounds
     @Test
     public void testNanEncodesToZeroRatherThanToAnExtreme()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0.0}, new double[] {1.0});
+        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0.0}, 1.0);
         assertThat(bounds.encode(0, Double.NaN)).isEqualTo((byte) 0);
     }
 }

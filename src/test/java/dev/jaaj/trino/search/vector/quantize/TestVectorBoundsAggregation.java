@@ -37,7 +37,7 @@ public class TestVectorBoundsAggregation
     {
         assertQuery(
                 """
-                SELECT b.offsets[1], b.scales[1]
+                SELECT b.offsets[1], b.scale
                 FROM (
                     SELECT vector_bounds_agg(v) AS b
                     FROM (VALUES (ARRAY[CAST(-1.0 AS DOUBLE)]), (ARRAY[CAST(3.0 AS DOUBLE)])) AS t(v)
@@ -63,21 +63,43 @@ public class TestVectorBoundsAggregation
     }
 
     /**
-     * A dimension whose minimum equals its maximum has no range. The scale is zero rather than an
-     * error, and QuantizationBounds treats that as "every value here is the offset".
+     * A corpus whose minimum equals its maximum across every dimension has no range at all. The
+     * scale is zero rather than an error, and QuantizationBounds treats that as "every value here
+     * is the offset".
      */
     @Test
-    public void testConstantDimensionYieldsZeroScale()
+    public void testConstantCorpusYieldsZeroScale()
     {
         assertQuery(
                 """
-                SELECT b.scales[1]
+                SELECT b.scale
                 FROM (
                     SELECT vector_bounds_agg(v) AS b
                     FROM (VALUES (ARRAY[CAST(7.0 AS DOUBLE)]), (ARRAY[CAST(7.0 AS DOUBLE)])) AS t(v)
                 )
                 """,
                 "SELECT CAST(0.0 AS DOUBLE)");
+    }
+
+    /**
+     * A dimension that never varies on its own still inherits the scale fitted across the whole
+     * corpus, rather than getting a scale of its own: the scale is a single value, not one per
+     * dimension.
+     */
+    @Test
+    public void testConstantDimensionInAVaryingCorpusGetsTheGlobalScale()
+    {
+        assertQuery(
+                """
+                SELECT b.scale
+                FROM (
+                    SELECT vector_bounds_agg(v) AS b
+                    FROM (VALUES
+                        (ARRAY[CAST(0.0 AS DOUBLE), CAST(7.0 AS DOUBLE)]),
+                        (ARRAY[CAST(4.0 AS DOUBLE), CAST(7.0 AS DOUBLE)])) AS t(v)
+                )
+                """,
+                "SELECT 7.0 / 255.0");
     }
 
     @Test

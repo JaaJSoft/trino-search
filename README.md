@@ -42,15 +42,15 @@ at the binary end.
 That byte reduction is the point: it is what a scan reads and what a corpus costs to store, not a
 faster distance computation. `BENCHMARKS.md` measures int8's kernel as more expensive per
 component than the float kernels, because both of its benchmarks are arithmetic-bound and int8
-does more per-component work: each code widens into a double lane and is multiplied by a
-per-dimension scale before the kernel can proceed. Binary's kernel, an XOR and a population count,
-genuinely is several times cheaper. Read the "How to read this" section of `BENCHMARKS.md` before
-drawing a performance conclusion from any one row; int8's payoff is storage and scan volume at
-corpus scale, which no benchmark in this repository is large enough to reach.
+does more per-component work: each code widens into a double lane and is multiplied by a scale
+before the kernel can proceed. Binary's kernel, an XOR and a population count, genuinely is
+several times cheaper. Read the "How to read this" section of `BENCHMARKS.md` before drawing a
+performance conclusion from any one row; int8's payoff is storage and scan volume at corpus
+scale, which no benchmark in this repository is large enough to reach.
 
 | Function | Description |
 | --- | --- |
-| `vector_bounds_agg(x)` | fits per-dimension quantisation bounds over a corpus |
+| `vector_bounds_agg(x)` | fits per-dimension offsets and a single global scale over a corpus |
 | `quantize_vector_tinyint(x, bounds)` | one signed byte per component; alias `quantize_vector_int8` |
 | `quantize_vector_varbinary(x, bounds)` | one bit per component; aliases `quantize_vector_binary` and `quantize_vector_int1` |
 | `hamming_distance(x, y)` | components that differ between two binary vectors |
@@ -73,10 +73,9 @@ euclidean_distance(codes_a, codes_b, bounds)
 
 > Dropping that argument does not fail. `array(tinyint)` coerces implicitly to the float vector
 > types, so a two-argument call compiles, binds to an exact-vector overload, and computes on the raw
-> codes with no scales at all: a plausible number and a wrong ranking as soon as the scales differ
-> between dimensions. The bounds are what turn the raw codes back into the real metric, and for
-> `cosine_similarity` they are what make it meaningful at all, since cosine is not
-> translation-invariant.
+> codes with no scale applied at all: a plausible-looking number that is not the true distance. The
+> bounds are what turn the raw codes back into the real metric, and for `cosine_similarity` they are
+> what make it meaningful at all, since cosine is not translation-invariant.
 
 Both operands must have been fitted against the bounds passed. Nothing checks that.
 
