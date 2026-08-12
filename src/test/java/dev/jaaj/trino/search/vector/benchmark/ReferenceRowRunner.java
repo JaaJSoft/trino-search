@@ -38,7 +38,7 @@ import java.util.regex.Pattern;
 /**
  * Measures the eight reference points and prints the {@code BENCHMARKS.md} row for them.
  * <p>
- * Sixteen JMH configurations instead of the full grid's fifty-four is what brings a recording down
+ * Sixteen JMH configurations instead of the full grid's 108 is what brings a recording down
  * from a quarter of an hour to a few minutes, which is the difference between a habit that
  * survives and one abandoned by the third pull request. Each benchmark keeps its own fork, warmup
  * and iteration counts, so a recorded row is produced under the same conditions as a full run.
