@@ -52,6 +52,20 @@ public class TestBinaryDistanceQueries
         assertQuery("SELECT hamming_distance(" + ALL_ONES + ", " + ALL_ONES + ")", "SELECT CAST(0 AS BIGINT)");
     }
 
+    /**
+     * Dimension 4 only defines the low four bits of the payload byte; the high four are padding.
+     * {@code TestBinaryCodes} pins the masking at the unit level, and this is the same contract
+     * where a caller actually sees it: two codes that differ only in their padding bits must
+     * compare as identical.
+     */
+    @Test
+    public void testPaddingBitsAreMaskedNotCounted()
+    {
+        assertQuery(
+                "SELECT hamming_distance(from_hex('00000004FF'), " + ALL_ONES + ")",
+                "SELECT CAST(0 AS BIGINT)");
+    }
+
     @Test
     public void testEuclideanSquaredDistanceIsFourTimesHamming()
     {

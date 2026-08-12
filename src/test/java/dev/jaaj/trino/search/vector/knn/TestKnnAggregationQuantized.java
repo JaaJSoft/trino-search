@@ -218,7 +218,7 @@ public class TestKnnAggregationQuantized
                 """
                 SELECT n[1][1], n[2][1]
                 FROM (
-                    SELECT knn_agg(id, v, from_hex('00000004FF'), 2, 'euclidean') AS n
+                    SELECT knn_agg(id, v, from_hex('000000040F'), 2, 'euclidean') AS n
                     FROM (VALUES
                         (1, from_hex('0000000400')),
                         (2, from_hex('000000040F')),
@@ -257,7 +257,7 @@ public class TestKnnAggregationQuantized
     {
         assertQuery(
                 """
-                SELECT knn_agg(id, v, from_hex('00000004FF'), 2, 'euclidean') IS NULL
+                SELECT knn_agg(id, v, from_hex('000000040F'), 2, 'euclidean') IS NULL
                 FROM (VALUES (1, from_hex('0000000400'))) AS t(id, v)
                 WHERE id = 999
                 """,
@@ -279,7 +279,7 @@ public class TestKnnAggregationQuantized
                 """
                 SELECT cardinality(n), n[1][1]
                 FROM (
-                    SELECT knn_agg(id, v, from_hex('00000004FF'), 2, 'euclidean') AS n
+                    SELECT knn_agg(id, v, from_hex('000000040F'), 2, 'euclidean') AS n
                     FROM (VALUES
                         (1, from_hex('0000000400')),
                         (2, CAST(NULL AS varbinary)),
@@ -296,7 +296,7 @@ public class TestKnnAggregationQuantized
                 """
                 SELECT cardinality(n)
                 FROM (
-                    SELECT knn_agg(id, v, from_hex('00000004FF'), 2, 'euclidean') AS n
+                    SELECT knn_agg(id, v, from_hex('000000040F'), 2, 'euclidean') AS n
                     FROM (VALUES
                         (CAST(NULL AS varchar), from_hex('000000040F')),
                         ('b', from_hex('0000000403'))) AS t(id, v)
