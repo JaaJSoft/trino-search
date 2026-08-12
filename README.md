@@ -34,10 +34,10 @@ memory read per row.
 
 A vector can be stored quantised instead of as `double` or `real` components: one signed byte
 per component (`array(tinyint)`), or one bit (`varbinary`). At dimension 768 an `array(double)`
-row is 6144 bytes, an `array(real)` row is 3072, an `array(tinyint)` row is 768, and a binary row
-is 100 (a four-byte header plus `ceil(768 / 8)` packed bytes). That is four times fewer bytes than
-`array(real)` at the int8 end of the range, and about sixty-one times fewer than `array(double)`
-at the binary end.
+vector's uncompressed payload is 6144 bytes, an `array(real)` payload is 3072, an `array(tinyint)`
+payload is 768, and a binary payload is 100 (a four-byte header plus `ceil(768 / 8)` packed
+bytes). That is four times fewer bytes than `array(real)` at the int8 end of the range, and about
+sixty-one times fewer than `array(double)` at the binary end.
 
 That byte reduction is real: an int8 corpus is eight times smaller than the equivalent
 `array(double)` one, and a binary corpus smaller still. It is not the only payoff: on the machine
