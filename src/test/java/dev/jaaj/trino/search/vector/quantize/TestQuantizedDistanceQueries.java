@@ -27,6 +27,9 @@ public class TestQuantizedDistanceQueries
     private static final String UNIT_BOUNDS =
             "CAST(ROW(ARRAY[CAST(0.0 AS DOUBLE), CAST(0.0 AS DOUBLE)], CAST(1.0 AS DOUBLE)) "
                     + "AS row(offsets array(double), scale double))";
+    private static final String SCALED_BOUNDS =
+            "CAST(ROW(ARRAY[CAST(1.0 AS DOUBLE), CAST(1.0 AS DOUBLE)], CAST(2.0 AS DOUBLE)) "
+                    + "AS row(offsets array(double), scale double))";
     private static final String ORIGIN = "ARRAY[CAST(0 AS TINYINT), CAST(0 AS TINYINT)]";
     private static final String THREE_FOUR = "ARRAY[CAST(3 AS TINYINT), CAST(4 AS TINYINT)]";
 
@@ -52,6 +55,20 @@ public class TestQuantizedDistanceQueries
         assertQuery(
                 "SELECT euclidean_squared_distance(" + ORIGIN + ", " + THREE_FOUR + ", " + UNIT_BOUNDS + ")",
                 "SELECT 25.0");
+    }
+
+    /**
+     * UNIT_BOUNDS above leaves offset 0 and scale 1 everywhere, which a kernel that ignored the
+     * scale entirely would still pass. A non-zero offset and a scale other than 1 catch that: the
+     * code differences are -3 and -4, scaled by 2 they are -6 and -8, and 36 + 64 = 100. The offsets
+     * cancel in the difference, which is exactly why a non-zero offset belongs in the bounds here.
+     */
+    @Test
+    public void testEuclideanSquaredDistanceWithNonUnitScale()
+    {
+        assertQuery(
+                "SELECT euclidean_squared_distance(" + ORIGIN + ", " + THREE_FOUR + ", " + SCALED_BOUNDS + ")",
+                "SELECT 100.0");
     }
 
     @Test
