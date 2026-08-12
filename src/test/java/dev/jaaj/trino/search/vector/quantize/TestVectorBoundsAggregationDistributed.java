@@ -32,13 +32,14 @@ public class TestVectorBoundsAggregationDistributed
         extends AbstractTestQueryFramework
 {
     /**
-     * Vectors built from orderkey so the fitted offset and scale can be checked against
+     * Two components, each derived from orderkey differently so the two dimensions have genuinely
+     * different minima and maxima, and the fitted offsets and scale can be checked against
      * MIN/MAX(orderkey) computed independently. Using a TPCH table spreads the rows across splits,
      * which is what forces Trino to run the partial and final aggregation steps and therefore to
      * serialize the state, the same way TestKnnAggregationDistributed forces it for knn_agg.
      */
     private static final String VECTORS =
-            "(SELECT ARRAY[CAST(orderkey AS double)] AS v FROM tpch.tiny.orders)";
+            "(SELECT ARRAY[CAST(orderkey AS double), CAST(2 * orderkey AS double)] AS v FROM tpch.tiny.orders)";
 
     @Override
     protected QueryRunner createQueryRunner()
@@ -72,19 +73,23 @@ public class TestVectorBoundsAggregationDistributed
     /**
      * A single partition never calls the combine function, so this is the only shape that would
      * catch a serializer dropping a dimension or a combine that keeps only one side's extremes.
+     * Asserting every offset and the scale, rather than only the first dimension, is what makes a
+     * dropped second dimension or a one-sided combine actually fail here.
      */
     @Test
     public void testFitsAcrossSplits()
     {
         MaterializedResult actual = computeActual(
                 """
-                SELECT b.offsets[1], b.scale
+                SELECT b.offsets[1], b.offsets[2], b.scale
                 FROM (SELECT vector_bounds_agg(v) AS b FROM %s)
                 """.formatted(VECTORS));
         MaterializedResult expected = computeActual(
                 """
                 SELECT (CAST(MIN(orderkey) AS double) + CAST(MAX(orderkey) AS double)) / 2,
-                       (CAST(MAX(orderkey) AS double) - CAST(MIN(orderkey) AS double)) / 255.0
+                       (CAST(MIN(2 * orderkey) AS double) + CAST(MAX(2 * orderkey) AS double)) / 2,
+                       GREATEST(CAST(MAX(orderkey) AS double) - CAST(MIN(orderkey) AS double),
+                                CAST(MAX(2 * orderkey) AS double) - CAST(MIN(2 * orderkey) AS double)) / 255.0
                 FROM tpch.tiny.orders
                 """);
         assertEqualsIgnoreOrder(actual, expected);
