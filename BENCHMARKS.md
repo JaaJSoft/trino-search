@@ -22,22 +22,15 @@ How to read this:
 - A drift of up to 20 percent in absolutes, or up to 15 percent in a ratio, is noise rather than a
   change.
 - Ratios are comparable down a column, not across columns, and the int8 and int1 columns do not
-  move the same way. Both benchmarks here are arithmetic-bound rather than bandwidth-bound.
-  `BenchmarkVectorDistances` cycles a small cache-resident pool by design (see its class Javadoc),
-  so int8's real advantage, reading eight times fewer bytes per vector, never shows up there, while
-  the extra work its kernel does is fully visible: each code widens into a double lane and is
-  multiplied by a per-dimension scale before the same fused multiply-add the double and real
-  kernels reach in one step. `BenchmarkKnnAccumulator` does stream, but at dimension 768 its 4096
-  rows are about 3 MB of int8 codes against 25 MB of doubles, both of which fit comfortably in this
-  machine's cache, so it never becomes bandwidth-bound either. In this regime int8's kernel is
-  dearer than double or real and its ratio lower, which is the expected outcome of measuring
-  arithmetic cost with no bandwidth left to save, not a regression. int1 carries none of that extra
-  arithmetic, an XOR and a population count, so its kernel really is several times cheaper and its
-  higher ratio is the denominator shrinking exactly as a reader would expect. What int8 buys is
-  storage and scan volume at corpus scale: a billion 768-dimension vectors are 6.14 TB as
-  `array(double)` against 0.77 TB quantised, plus the recall floors the test suite pins; no
-  benchmark in this file reaches that scale. Integer-lane accumulation, deferred for now, is the
-  change that would close the arithmetic gap this row measures.
+  move the same way as double and real. int8's kernel sums pure integer differences over the raw
+  codes, accumulated in integer lanes, with the scale applied once at the end rather than loaded
+  and multiplied on every component; at dimension 768 on this machine it is the fastest kernel of
+  the three, ahead of both `array(double)` and `array(real)`. int1's kernel, an XOR and a
+  population count, is cheaper again, which is why its ratio sits so far from the others. What
+  int8 and int1 buy beyond kernel speed is storage and scan volume at corpus scale: a billion
+  768-dimension vectors are 6.14 TB as `array(double)` against 0.77 TB quantised to int8, and
+  smaller again as binary, plus the recall floors the test suite pins; no benchmark in this file
+  reaches that scale.
 
 To record a row, from a build with Java 25:
 

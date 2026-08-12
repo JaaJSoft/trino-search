@@ -39,14 +39,14 @@ is 100 (a four-byte header plus `ceil(768 / 8)` packed bytes). That is four time
 `array(real)` at the int8 end of the range, and about sixty-one times fewer than `array(double)`
 at the binary end.
 
-That byte reduction is the point: it is what a scan reads and what a corpus costs to store, not a
-faster distance computation. `BENCHMARKS.md` measures int8's kernel as more expensive per
-component than the float kernels, because both of its benchmarks are arithmetic-bound and int8
-does more per-component work: each code widens into a double lane and is multiplied by a scale
-before the kernel can proceed. Binary's kernel, an XOR and a population count, genuinely is
-several times cheaper. Read the "How to read this" section of `BENCHMARKS.md` before drawing a
-performance conclusion from any one row; int8's payoff is storage and scan volume at corpus
-scale, which no benchmark in this repository is large enough to reach.
+That byte reduction is real: an int8 corpus is eight times smaller than the equivalent
+`array(double)` one, and a binary corpus smaller still. It is not the only payoff: on the machine
+`BENCHMARKS.md` records, int8's euclidean kernel is also the fastest of the three at dimension
+768, because its inner sum is pure integer arithmetic over the raw codes with the scale applied
+once at the end rather than on every component. Binary's kernel, an XOR and a population count,
+is cheaper again. Read the "How to read this" section of `BENCHMARKS.md` before drawing a
+performance conclusion from any one row; it explains what the ratio column does and does not
+tell you.
 
 | Function | Description |
 | --- | --- |
