@@ -125,13 +125,11 @@ public final class VectorBoundsAggregation
             return;
         }
         double[] maximums = state.getMaximums();
-        double globalMinimum = Double.POSITIVE_INFINITY;
-        double globalMaximum = Double.NEGATIVE_INFINITY;
+        double widestRange = 0;
         for (int i = 0; i < minimums.length; i++) {
-            globalMinimum = Math.min(globalMinimum, minimums[i]);
-            globalMaximum = Math.max(globalMaximum, maximums[i]);
+            widestRange = Math.max(widestRange, maximums[i] - minimums[i]);
         }
-        double scale = (globalMaximum - globalMinimum) / QuantizationBounds.CODE_LEVELS;
+        double scale = widestRange / QuantizationBounds.CODE_LEVELS;
         ((RowBlockBuilder) out).buildEntry(fieldBuilders -> {
             ((ArrayBlockBuilder) fieldBuilders.get(0)).buildEntry(elementBuilder -> {
                 for (int i = 0; i < minimums.length; i++) {

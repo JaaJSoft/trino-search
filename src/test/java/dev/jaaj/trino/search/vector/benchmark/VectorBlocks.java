@@ -136,14 +136,12 @@ public final class VectorBlocks
         }
 
         double[] offsets = new double[dimension];
-        double globalMinimum = Double.POSITIVE_INFINITY;
-        double globalMaximum = Double.NEGATIVE_INFINITY;
+        double widestRange = 0;
         for (int i = 0; i < dimension; i++) {
             offsets[i] = (minimums[i] + maximums[i]) / 2;
-            globalMinimum = Math.min(globalMinimum, minimums[i]);
-            globalMaximum = Math.max(globalMaximum, maximums[i]);
+            widestRange = Math.max(widestRange, maximums[i] - minimums[i]);
         }
-        double scale = (globalMaximum - globalMinimum) / QuantizationBounds.CODE_LEVELS;
+        double scale = widestRange / QuantizationBounds.CODE_LEVELS;
         return QuantizationBounds.forTesting(offsets, scale);
     }
 

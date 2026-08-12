@@ -91,9 +91,9 @@ public class TestVectorBlocks
         QuantizationBounds bounds = VectorBlocks.fitBounds(vectors);
         assertThat(bounds.offset(0)).isEqualTo(1.0);
         assertThat(bounds.offset(1)).isEqualTo(5.0);
-        // The global range spans both dimensions: -1 to 5, since dimension 1 never varies and
-        // dimension 0 alone would understate it.
-        assertThat(bounds.scale()).isEqualTo(6.0 / 255.0);
+        // The scale fits the widest single-dimension range, which is dimension 0's: -1 to 3.
+        // Dimension 1 never varies, so it contributes nothing to it.
+        assertThat(bounds.scale()).isEqualTo(4.0 / 255.0);
     }
 
     /**

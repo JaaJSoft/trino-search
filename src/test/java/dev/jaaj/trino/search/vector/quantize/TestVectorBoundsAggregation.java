@@ -99,7 +99,29 @@ public class TestVectorBoundsAggregation
                         (ARRAY[CAST(4.0 AS DOUBLE), CAST(7.0 AS DOUBLE)])) AS t(v)
                 )
                 """,
-                "SELECT 7.0 / 255.0");
+                "SELECT 4.0 / 255.0");
+    }
+
+    /**
+     * The scale has to fit the widest single-dimension range, not the span from the smallest
+     * minimum to the largest maximum across dimensions. Two dimensions with the same range but
+     * sitting at very different absolute levels must still yield the same scale as either one
+     * alone.
+     */
+    @Test
+    public void testScaleReflectsWidestDimensionRangeNotGlobalSpan()
+    {
+        assertQuery(
+                """
+                SELECT b.scale
+                FROM (
+                    SELECT vector_bounds_agg(v) AS b
+                    FROM (VALUES
+                        (ARRAY[CAST(0.0 AS DOUBLE), CAST(100.0 AS DOUBLE)]),
+                        (ARRAY[CAST(1.0 AS DOUBLE), CAST(101.0 AS DOUBLE)])) AS t(v)
+                )
+                """,
+                "SELECT 1.0 / 255.0");
     }
 
     @Test
