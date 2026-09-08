@@ -30,6 +30,30 @@ memory read per row.
 > `array(double)` column, an explicit `CAST` or `DOUBLE 'x'` literals all keep the engine's
 > native implementation.
 
+### Normalised vectors
+
+A unit-norm vector has magnitude 1, so `cosine_similarity(x, y)` is `dot_product(x, y)` and
+`cosine_distance(x, y)` is `1 - dot_product(x, y)`. Normalising once at write time with
+`normalize_vector` and ranking on `'dot_product'` afterwards therefore returns the same
+neighbours as `'cosine'`, on a metric that needs no magnitudes at all:
+
+```sql
+CREATE TABLE documents AS SELECT id, category, normalize_vector(embedding) AS embedding FROM raw;
+
+SELECT category, knn_agg(id, embedding, normalize_vector(ARRAY[0.1, 0.2, 0.3]), 10, 'dot_product')
+FROM documents
+GROUP BY category;
+```
+
+Normalising the stored vectors is what makes the ranking identical. Normalising the query vector
+too is what makes the value that comes back the cosine similarity itself rather than a fixed
+multiple of it, and it is what lets `'euclidean'` rank identically as well, since the squared
+distance between two unit-norm vectors is `2 - 2 * dot_product`.
+
+`to_vector_double` and its aliases already return unit-norm vectors. `normalize_vector` raises
+"Vector magnitude cannot be zero" on the zero vector, exactly where cosine would: a row with
+nothing to normalise has to be filtered out either way.
+
 ### Quantisation
 
 A vector can be stored quantised instead of as `double` or `real` components: one signed byte
