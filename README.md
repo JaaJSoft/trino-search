@@ -1,211 +1,25 @@
 # Trino-search
 
-[Trino](https://trino.io) plugin providing search functions. The first family covers vectors:
-distance metrics, normalization and exact k-nearest-neighbour search.
+[Trino](https://trino.io) plugin providing search functions as SQL functions. The first family
+covers vectors: distance metrics, normalisation, text embeddings, quantisation and exact
+k-nearest-neighbour search.
 
-The plugin exposes functions only, no catalog and no connector: dropping the JAR into the
-plugin directory makes the functions available globally.
+The plugin exposes functions only, no catalog and no connector: dropping the JAR into the plugin
+directory makes the functions available globally. Vectors are ordinary Trino values, so there is
+no custom type and no `CAST` to learn.
 
-## Functions
+## Installation
 
-Vectors are `array(double)`, `array(real)`, `array(tinyint)` for one byte per component, or
-`varbinary` for one bit. No custom type, no `CAST`.
+Requires Trino 483 and Java 25.
 
-### Metrics
-
-| Function | Description |
-| --- | --- |
-| `euclidean_squared_distance(x, y)` | squared euclidean distance, without the `sqrt` |
-| `manhattan_distance(x, y)` | L1 distance |
-| `l2_norm(x)` | euclidean norm |
-| `normalize_vector(x)` | unit-norm vector, of the same type as the input |
-
-Trino already ships `euclidean_distance`, `dot_product`, `cosine_similarity` and
-`cosine_distance`, but only on `array(double)`. This plugin adds the `array(real)` overloads
-under the same names, so an `array(real)` column does not need a `CAST` that would double the
-memory read per row.
-
-> One consequence: an untyped decimal literal such as `ARRAY[0.1, 0.2]` binds to the
-> `array(real)` overload, with the matching precision and `NULL` handling. A genuinely typed
-> `array(double)` column, an explicit `CAST` or `DOUBLE 'x'` literals all keep the engine's
-> native implementation.
-
-### Normalised vectors
-
-A unit-norm vector has magnitude 1, so `cosine_similarity(x, y)` is `dot_product(x, y)` and
-`cosine_distance(x, y)` is `1 - dot_product(x, y)`. Normalising once at write time with
-`normalize_vector` and ranking on `'dot_product'` afterwards therefore returns the same
-neighbours as `'cosine'`, on a metric that needs no magnitudes at all:
-
-```sql
-CREATE TABLE documents AS SELECT id, category, normalize_vector(embedding) AS embedding FROM raw;
-
-SELECT category, knn_agg(id, embedding, normalize_vector(ARRAY[0.1, 0.2, 0.3]), 10, 'dot_product')
-FROM documents
-GROUP BY category;
+```bash
+./mvnw clean package
 ```
 
-Normalising the stored vectors is what makes the ranking identical. Normalising the query vector
-too is what makes the value that comes back the cosine similarity itself rather than a fixed
-multiple of it, and it is what lets `'euclidean'` rank identically as well, since the squared
-distance between two unit-norm vectors is `2 - 2 * dot_product`.
+Copy the contents of `target/trino-search-<version>/` into `<trino>/plugin/search/`, then restart
+the server.
 
-`to_vector_double` and its aliases already return unit-norm vectors. `normalize_vector` raises
-"Vector magnitude cannot be zero" on the zero vector, exactly where cosine would: a row with
-nothing to normalise has to be filtered out either way.
-
-### Quantisation
-
-A vector can be stored quantised instead of as `double` or `real` components: one signed byte
-per component (`array(tinyint)`), or one bit (`varbinary`). At dimension 768 an `array(double)`
-vector's uncompressed payload is 6144 bytes, an `array(real)` payload is 3072, an `array(tinyint)`
-payload is 768, and a binary payload is 100 (a four-byte header plus `ceil(768 / 8)` packed
-bytes). That is four times fewer bytes than `array(real)` at the int8 end of the range, and about
-sixty-one times fewer than `array(double)` at the binary end.
-
-That byte reduction is real: an int8 corpus is eight times smaller than the equivalent
-`array(double)` one, and a binary corpus smaller still. It is not the only payoff: on the machine
-`BENCHMARKS.md` records, int8's euclidean kernel is also the fastest of the three at dimension
-768, because its inner sum is pure integer arithmetic over the raw codes with the scale applied
-once at the end rather than on every component. Binary's kernel, an XOR and a population count,
-is cheaper again. Read the "How to read this" section of `BENCHMARKS.md` before drawing a
-performance conclusion from any one row; it explains what the ratio column does and does not
-tell you.
-
-| Function | Description |
-| --- | --- |
-| `vector_bounds_agg(x)` | fits per-dimension offsets and a single global scale over a corpus |
-| `quantize_vector_tinyint(x, bounds)` | one signed byte per component; alias `quantize_vector_int8` |
-| `quantize_vector_varbinary(x, bounds)` | one bit per component; aliases `quantize_vector_binary` and `quantize_vector_int1` |
-| `hamming_distance(x, y)` | components that differ between two binary vectors |
-
-Fit the bounds once over a corpus, then encode:
-
-```sql
-CREATE TABLE quantisation AS SELECT vector_bounds_agg(embedding) AS p FROM documents;
-
-ALTER TABLE documents ADD COLUMN embedding_int8 array(tinyint);
-UPDATE documents SET embedding_int8 = quantize_vector_tinyint(embedding, (SELECT p FROM quantisation));
-```
-
-Every metric gains an overload per representation. On `array(tinyint)` both vectors are codes and
-the fitted bounds are a **mandatory third argument**:
-
-```sql
-euclidean_distance(codes_a, codes_b, bounds)
-```
-
-> Dropping that argument does not fail. `array(tinyint)` coerces implicitly to the float vector
-> types, so a two-argument call compiles, binds to an exact-vector overload, and computes on the raw
-> codes with no scale applied at all: a plausible-looking number that is not the true distance. The
-> bounds are what turn the raw codes back into the real metric, and for `cosine_similarity` they are
-> what make it meaningful at all, since cosine is not translation-invariant.
-
-Both operands must have been fitted against the bounds passed. Nothing checks that.
-
-On `varbinary` the metrics take two arguments and no bounds, since a binary code needs nothing
-beyond itself to be read. The codes stand for a vector of `-1` and `+1` components, so every
-metric is a closed form in the Hamming distance and all of them rank identically. A value is a
-four-byte big-endian dimension header followed by `ceil(dimension / 8)` bytes, least significant
-bit first.
-
-The `quantize_vector_int1` spelling is there for the vocabulary that counts bits. The codes decode
-to `-1` and `+1`, not to the `-1` and `0` a one-bit two's complement integer would hold.
-
-### Approximate search by quantisation
-
-Ranking on codes is approximate. The suite's measured recall floors (`TestQuantizedKnnAggRecall`)
-show why oversampling matters, particularly for binary codes:
-
-| representation | regime | oversampling | measured recall |
-| --- | --- | --- | --- |
-| int8 | clustered | 1x | 0.98 |
-| int8 | uniform | 1x | 1.00 |
-| binary | clustered | 10x | 1.00 |
-| binary | uniform | 1x | 0.32 |
-| binary | uniform | 10x | 0.88 |
-
-A one-bit code recovering only about a third of the true neighbours at 1x under the uniform regime
-is not a defect: in high dimension every pairwise distance concentrates, leaving a one-bit code
-little to exploit. Oversampling the shortlist is how binary search becomes usable.
-
-To recover the exact order, oversample the shortlist and join back to the exact column:
-
-```sql
-WITH params AS (SELECT p FROM quantisation),
-     query AS (SELECT quantize_vector_tinyint(:embedding, p) AS codes, p FROM params),
-     shortlist AS (
-         SELECT knn_agg(d.id, d.embedding_int8, q.codes, q.p, 100, 'euclidean') AS candidates
-         FROM documents d CROSS JOIN query q
-     )
-SELECT d.id, euclidean_distance(d.embedding, :embedding) AS distance
-FROM shortlist, UNNEST(candidates) AS c(id, approximate)
-JOIN documents d ON d.id = c.id
-ORDER BY distance
-LIMIT 10;
-```
-
-The scan reads only the codes; the exact vectors are read for the shortlist alone.
-
-### Text embeddings
-
-```sql
-to_vector_real(text, dimension, algorithm)   -> array(real)
-to_vector_double(text, dimension, algorithm) -> array(double)
-```
-
-Embeds text by feature hashing: every token is hashed to an index and a sign, and contributes one
-unit there. No model, no vocabulary and no external call, so the vector of a row depends on that
-row alone and is stable across servers and restarts. That stability holds within a plugin version
-and is not guaranteed across upgrades: a vector stored in a table should be recomputed when the
-plugin is upgraded, or compared only against vectors produced by the same version.
-
-`algorithm` is one of `'word'`, `'char_3gram'`, `'char_4gram'` or `'char_5gram'`. `'word'` splits
-on non-alphanumeric characters; the n-gram variants slide a window of that many characters, which
-tolerates typos and handles languages that do not separate words with spaces. `dimension` must be
-between 1 and 65536.
-
-The result has unit norm, so euclidean and cosine distance rank identically, with one exception:
-text containing no token returns the zero vector rather than raising, so a single empty row
-cannot fail a scan by itself. Text that is not valid UTF-8 is likewise not fatal: invalid byte
-sequences are replaced with the Unicode replacement character before tokenizing, so a row with
-corrupted encoding still embeds instead of failing the query. Text shorter than the n-gram window
-contains no token either, since no window fits in it: `to_vector_double('hi', 256, 'char_5gram')`
-is the zero vector. That zero vector still works with euclidean distance, but a zero vector has no
-direction for cosine to compare, so passing it to `cosine_similarity`, `cosine_distance` or
-`knn_agg` with the `'cosine'` metric raises "Vector magnitude cannot be zero". Filter out the
-empty and too-short rows, or use euclidean distance, if the input can contain them.
-`to_vector_fp32` and `to_vector_fp64` are aliases of the `real` and `double` forms.
-
-Feature hashing captures token overlap, not meaning: two texts sharing no word are far apart even
-if they say the same thing. It suits deduplication, tag and identifier matching, and near-duplicate
-detection, and it is not a substitute for a learned embedding model.
-
-```sql
--- three nearest titles per category, embedded on the fly
-SELECT category, knn_agg(id, to_vector_double(title, 256, 'word'), to_vector_double('trino query engine', 256, 'word'), 3, 'euclidean')
-FROM documents
-GROUP BY category;
-```
-
-### Aggregation
-
-```sql
-knn_agg(key, vector, query_vector, k, metric) -> array(row(key, distance))
-```
-
-Returns the `k` nearest neighbours of `query_vector` **per group**, nearest first. `metric` is
-one of `'euclidean'`, `'euclidean_squared'`, `'cosine'`, `'dot_product'` or `'manhattan'`. `k`
-is capped at 10000, and both `k` and `metric` must be constant within a group.
-
-The quantised overloads follow the same argument order as the scalar distance functions above:
-
-```sql
-knn_agg(key, array(tinyint) vector, array(tinyint) query, bounds, k, metric)
-knn_agg(key, varbinary vector, varbinary query, k, metric)
-```
-
-## Examples
+## Quick start
 
 ```sql
 -- global top 10 over an array(real) column
@@ -214,34 +28,38 @@ FROM documents
 ORDER BY distance
 LIMIT 10;
 
--- top 3 per category
-SELECT category, knn_agg(id, embedding, ARRAY[0.1, 0.2, 0.3], 3, 'cosine') AS neighbors
+-- top 3 per category, in one pass
+SELECT category, knn_agg(id, embedding, ARRAY[0.1, 0.2, 0.3], 3, 'cosine') AS neighbours
 FROM documents
 GROUP BY category;
 ```
 
-## Compatibility
+## Documentation
 
-Trino 483, Java 25.
+| Page | Covers |
+| --- | --- |
+| [Vectors and distance metrics](docs/vectors.md) | representations, the metric functions, normalisation, null and dimension handling |
+| [k-nearest-neighbour search](docs/knn.md) | `knn_agg`, its overloads, constraints and edge cases |
+| [Quantisation and approximate search](docs/quantization.md) | int8 and binary codes, fitting bounds, recall, oversample and re-rank |
+| [Text embeddings](docs/embeddings.md) | `to_vector_*`, feature hashing and its limits |
+| [Benchmarks](BENCHMARKS.md) | recorded measurements and how to read them |
 
-## Installation
+## Function index
 
-```bash
-./mvnw clean package
-```
-
-Copy the contents of `target/trino-search-<version>/` into `<trino>/plugin/search/`, then
-restart the server.
+| Function | Page |
+| --- | --- |
+| `euclidean_distance`, `euclidean_squared_distance`, `manhattan_distance` | [vectors](docs/vectors.md), [quantisation](docs/quantization.md) |
+| `dot_product`, `cosine_similarity`, `cosine_distance` | [vectors](docs/vectors.md), [quantisation](docs/quantization.md) |
+| `l2_norm`, `normalize_vector` | [vectors](docs/vectors.md) |
+| `knn_agg` | [knn](docs/knn.md) |
+| `vector_bounds_agg`, `quantize_vector_tinyint`, `quantize_vector_varbinary`, `hamming_distance` | [quantisation](docs/quantization.md) |
+| `to_vector_real`, `to_vector_double` | [embeddings](docs/embeddings.md) |
 
 ## Status
 
 v1 implements exact KNN. Approximate search is available through quantisation: rank on int8 or
 binary codes, oversample, and re-rank against the exact vectors in SQL. Index-based approximate
 search is planned.
-
-## Benchmarks
-
-Vector search performance is tracked per pull request in [`BENCHMARKS.md`](BENCHMARKS.md).
 
 ## License
 

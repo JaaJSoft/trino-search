@@ -10,15 +10,21 @@ are expected, so each family lives in its own subpackage under `dev.jaaj.trino.s
 
 The tests are the specification. Edge-case behavior (null elements, zero norms, dimension
 mismatches, empty groups, a `k` larger than the group) is pinned by name in the test classes,
-and `README.md` documents the user-facing contract. Read both before changing behavior; if a
-change makes a test fail, the test is the thing to argue with, not to edit.
+and `README.md` plus the pages under `docs/` document the user-facing contract. Read both
+before changing behavior; if a change makes a test fail, the test is the thing to argue with,
+not to edit.
+
+`README.md` stays short: what the plugin is, how to install it, one quick start, and an index.
+Everything else belongs to a themed page under `docs/` (`vectors.md`, `knn.md`,
+`quantization.md`, `embeddings.md`), one per family of functions, and a new family gets a new
+page rather than a new README section.
 
 ## Workflow artifacts are never committed
 
 Implementation plans, task briefs, progress notes, assistant scratch directories: none of it
 goes in git. It is bookkeeping, it dates the moment the code lands, and it leaks local machine
 paths and tooling names into a public repository. Only source, tests, build files, `README.md`,
-`BENCHMARKS.md` and this file belong here. `BENCHMARKS.md` is a recorded result rather than
+`docs/`, `BENCHMARKS.md` and this file belong here. `BENCHMARKS.md` is a recorded result rather than
 bookkeeping, which is why it belongs here and the plans and progress notes do not.
 
 ## Build
@@ -43,7 +49,7 @@ modernizer enforce most of the Trino code style on build. Rules the tooling does
 - Root package is `dev.jaaj.trino.search`. Never `io.trino.*`: that groupId belongs to the
   Trino project, and a split package would break the isolated plugin classloader.
 - Everything is written in English: code, comments, commit messages, PR descriptions, issues
-  and `README.md`.
+  and documentation.
 
 ## Testing
 
