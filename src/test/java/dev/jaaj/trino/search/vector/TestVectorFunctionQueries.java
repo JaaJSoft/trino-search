@@ -82,7 +82,7 @@ public class TestVectorFunctionQueries
         // exercising once it needed an explicit CAST (see the comment there). Since Task 5, an
         // untyped decimal array literal such as ARRAY[3.0, 4.0] resolves to the plugin's
         // array(real) overload of normalize_vector, not the engine's array(double) one - this is
-        // an accepted consequence of reusing the native SQL name (see README.md). This test pins
+        // an accepted consequence of reusing the native SQL name (see docs/vectors.md). This test pins
         // that: the uncast form now returns an array(real), with the values still correct within
         // float32 precision (3.0 and 4.0 are exactly representable in float32, so 0.6 and 0.8
         // still need a tolerance because the division is not exact in either precision).

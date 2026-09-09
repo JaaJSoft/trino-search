@@ -262,7 +262,7 @@ public class TestKnnAggregation
     {
         // knn_agg is registered as two overloads, array(double) and array(real), but every other
         // test in this class binds to array(real): an untyped decimal array literal such as
-        // ARRAY[0.1] coerces to array(real) preferentially (see README and
+        // ARRAY[0.1] coerces to array(real) preferentially (see docs/vectors.md and
         // TestVectorRealFunctionQueries), so nothing exercised OfDoubleVectors at all before this
         // test. CAST(... AS array(double)) forces exact-match resolution to OfDoubleVectors, and
         // 0.1/0.2/0.3 are not exact in float32, so comparing the returned distances against the
