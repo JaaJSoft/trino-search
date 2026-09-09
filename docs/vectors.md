@@ -26,8 +26,9 @@ The binary payload is a four-byte header plus `ceil(768 / 8)` packed bytes.
 | `l2_norm(x)` | plugin | plugin | euclidean norm |
 | `normalize_vector(x)` | plugin | plugin | unit-norm vector, same type as the input |
 
-All of them return `double`. The quantised representations carry their own overloads of the same
-names, described in [quantization.md](quantization.md).
+Every one of them returns `double` except `normalize_vector`, which returns its input's own array
+type. The quantised representations carry their own overloads of the same names, described in
+[quantization.md](quantization.md).
 
 ## Why the `array(real)` overloads exist
 

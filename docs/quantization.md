@@ -48,9 +48,9 @@ ALTER TABLE documents ADD COLUMN embedding_int8 array(tinyint);
 UPDATE documents SET embedding_int8 = quantize_vector_tinyint(embedding, (SELECT p FROM quantisation));
 ```
 
-Binary codes come from the same bounds: a bit is set for every component above its dimension's
-midpoint. Quantising about the midpoint rather than about zero is what keeps the codes centred
-instead of dominated by whichever side of zero the embedding happens to sit on.
+Binary codes come from the same bounds: a bit is set for every component at or above its
+dimension's midpoint. Quantising about the midpoint rather than about zero is what keeps the codes
+centred instead of dominated by whichever side of zero the embedding happens to sit on.
 
 ## Distances on codes
 
