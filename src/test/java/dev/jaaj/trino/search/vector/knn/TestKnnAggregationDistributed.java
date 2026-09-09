@@ -174,6 +174,31 @@ public class TestKnnAggregationDistributed
     }
 
     /**
+     * The cosine metric remembers the second operand's magnitude from one row to the next, since
+     * ranking a column against one query vector otherwise recomputes the same constant on every
+     * row. Nothing requires the query vector to be constant, though, and successive rows of a page
+     * hand over vectors that share one backing array, so a query vector that changes per row is
+     * where remembering it by anything less than its exact components returns the neighbours of
+     * whichever row was seen first.
+     */
+    @Test
+    public void testCosineMetricWithAQueryVectorThatVariesPerRow()
+    {
+        MaterializedResult actual = computeActual(
+                """
+                SELECT transform(knn_agg(orderkey, ARRAY[1.0, 0.0], ARRAY[CAST(orderkey AS double), 1.0], 5, 'cosine'), x -> x[1])
+                FROM tpch.tiny.orders
+                """);
+        MaterializedResult expected = computeActual(
+                """
+                SELECT array_agg(orderkey ORDER BY d, orderkey) FROM (
+                    SELECT orderkey, cosine_distance(ARRAY[1.0, 0.0], ARRAY[CAST(orderkey AS double), 1.0]) AS d
+                    FROM tpch.tiny.orders ORDER BY d, orderkey LIMIT 5)
+                """);
+        assertEqualsIgnoreOrder(actual, expected);
+    }
+
+    /**
      * {@code dot_product} is the only metric with {@code higherIsCloser = true}: every other
      * metric tested in this class ranks smaller as closer. An inverted direction across the
      * serialize/combine boundary (for example a heap that keeps sifting toward the smallest dot

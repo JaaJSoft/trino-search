@@ -383,6 +383,95 @@ public class TestVectorMath
                 .isCloseTo(0.0, within(1e-12));
     }
 
+    /**
+     * The second operand's sum of squares is remembered from one call to the next, so a row can
+     * be served from an entry another row filled. It must not matter which: a group whose first
+     * row ranked on freshly accumulated bits and whose later rows ranked on remembered ones would
+     * order two candidates that tie by which of them happened to arrive first.
+     */
+    @Test
+    public void testCosineSimilarityDoesNotDependOnWhatAnEarlierCallLeftBehind()
+    {
+        Block first = doubles(0.1, 0.2, 0.3, 0.4);
+        // Nothing has ever seen this block's components, so the first call has to accumulate the
+        // second operand's magnitude itself and the second call is served from what it left.
+        Block second = doubles(0.7, 0.1, 0.9, 0.2);
+
+        double accumulatedInFull = VectorMath.cosineSimilarity(first, second, DOUBLE_READER);
+        assertThat(VectorMath.cosineSimilarity(first, second, DOUBLE_READER)).isEqualTo(accumulatedInFull);
+    }
+
+    /**
+     * Successive rows of a page hand over vectors that share one backing array and differ only in
+     * where they start, so remembering the second operand by anything less than its exact stretch
+     * of that array would rank every row after the first against the wrong magnitude. The two
+     * vectors below are not multiples of each other: cosine ignores the scale of an operand, so
+     * two that differed only by one would agree however wrong the magnitude was.
+     */
+    @Test
+    public void testCosineSimilarityOfVectorsSharingABackingArray()
+    {
+        Block page = doubles(1.0, 0.0, 1.0, 1.0);
+        Block first = doubles(1.0, 0.0);
+
+        assertThat(VectorMath.cosineSimilarity(first, page.getRegion(0, 2), DOUBLE_READER))
+                .isCloseTo(1.0, within(1e-12));
+        assertThat(VectorMath.cosineSimilarity(first, page.getRegion(2, 2), DOUBLE_READER))
+                .isCloseTo(1.0 / Math.sqrt(2.0), within(1e-12));
+    }
+
+    /**
+     * Two vectors can share an array and an offset and still differ: a prefix of a longer one is
+     * exactly that. A remembered magnitude covers a fixed number of components, so ranking the
+     * longer vector against the prefix's would rate it as though its tail were not there.
+     */
+    @Test
+    public void testCosineSimilarityOfVectorsSharingABackingArrayFromTheSameOffset()
+    {
+        Block page = doubles(3.0, 4.0, 12.0);
+
+        assertThat(VectorMath.cosineSimilarity(doubles(3.0, 4.0), page.getRegion(0, 2), DOUBLE_READER))
+                .isCloseTo(1.0, within(1e-12));
+        assertThat(VectorMath.cosineSimilarity(doubles(3.0, 4.0, 12.0), page.getRegion(0, 3), DOUBLE_READER))
+                .isCloseTo(1.0, within(1e-12));
+        assertThat(VectorMath.cosineSimilarity(doubles(0.0, 0.0, 1.0), page.getRegion(0, 3), DOUBLE_READER))
+                .isCloseTo(12.0 / 13.0, within(1e-12));
+    }
+
+    /**
+     * The rescaling paths read the operands again rather than the sums, so they have to be reached
+     * whether the second operand's magnitude was accumulated on this call or remembered from an
+     * earlier one.
+     */
+    @Test
+    public void testCosineSimilarityRescalesWhateverWasRemembered()
+    {
+        Block huge = doubles(1e200, 1e200);
+        assertThat(VectorMath.cosineSimilarity(huge, huge, DOUBLE_READER)).isCloseTo(1.0, within(1e-12));
+        assertThat(VectorMath.cosineSimilarity(doubles(1.0, 1.0), huge, DOUBLE_READER))
+                .isCloseTo(1.0, within(1e-12));
+
+        Block zero = doubles(0.0, 0.0);
+        assertThatThrownBy(() -> VectorMath.cosineSimilarity(doubles(1.0, 1.0), zero, DOUBLE_READER))
+                .isInstanceOf(TrinoException.class)
+                .hasMessageContaining("Vector magnitude cannot be zero");
+        assertThatThrownBy(() -> VectorMath.cosineSimilarity(doubles(2.0, 2.0), zero, DOUBLE_READER))
+                .isInstanceOf(TrinoException.class)
+                .hasMessageContaining("Vector magnitude cannot be zero");
+    }
+
+    @Test
+    public void testCosineSimilarityOfRealVectorsSharingABackingArray()
+    {
+        Block page = reals(1.0f, 0.0f, 1.0f, 1.0f);
+        Block first = reals(1.0f, 0.0f);
+
+        assertThat(VectorMath.cosineSimilarity(first, page.getRegion(0, 2), REAL_READER))
+                .isCloseTo(1.0, within(1e-12));
+        assertThat(VectorMath.cosineSimilarity(first, page.getRegion(2, 2), REAL_READER))
+                .isCloseTo(1.0 / Math.sqrt(2.0), within(1e-12));
+    }
+
     @Test
     public void testDistancesAreSymmetric()
     {

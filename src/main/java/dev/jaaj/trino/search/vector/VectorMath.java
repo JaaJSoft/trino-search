@@ -57,6 +57,16 @@ final class VectorMath
      */
     private static final int CHECK_STRIDE = 64;
 
+    /**
+     * The one piece of state in this class, and per thread rather than per query or per group: a
+     * cosine call sees two blocks and nothing that outlives a row, and a driver thread walks the
+     * rows of one split at a time, so a single entry serves every group that thread touches while
+     * nothing is shared between threads. What makes an entry safe to reuse, and why the array
+     * behind it is held weakly, is in {@link SquaredMagnitudeCache}.
+     */
+    private static final ThreadLocal<SquaredMagnitudeCache> SECOND_SQUARED_MAGNITUDES =
+            ThreadLocal.withInitial(SquaredMagnitudeCache::new);
+
     private VectorMath() {}
 
     /**
@@ -396,19 +406,75 @@ final class VectorMath
         return Math.sqrt(sum);
     }
 
+    /**
+     * The second operand is the query vector wherever this is ranking a column, one value for the
+     * whole query, so one of the three sums the loop accumulates comes out the same on every row.
+     * It is accumulated once and read from {@link #SECOND_SQUARED_MAGNITUDES} afterwards, leaving
+     * the per-row loop with the two that do change. A row whose second operand is not the
+     * remembered one accumulates all three and remembers its own, so a call site where both
+     * operands rotate keeps the single pass it has today.
+     * <p>
+     * The two loops accumulate the components in the same order, which is what makes a row served
+     * from the cache return the same bits as the row that filled it. Two spellings of the same
+     * distance within one group would be a quiet way to reorder neighbours that tie.
+     */
     static double cosineSimilarity(Block first, Block second, VectorReader reader)
+    {
+        int length = first.getPositionCount();
+        SquaredMagnitudeCache cache = SECOND_SQUARED_MAGNITUDES.get();
+        double secondMagnitude = cache.lookup(second, reader, length);
+        if (secondMagnitude == SquaredMagnitudeCache.MISS) {
+            return cosineSimilarityAccumulatingBothMagnitudes(first, second, reader, length, cache);
+        }
+        return cosineSimilarityAgainstAKnownMagnitude(first, second, reader, length, secondMagnitude);
+    }
+
+    private static double cosineSimilarityAccumulatingBothMagnitudes(
+            Block first,
+            Block second,
+            VectorReader reader,
+            int length,
+            SquaredMagnitudeCache cache)
     {
         double firstMagnitude = 0.0;
         double secondMagnitude = 0.0;
         double dotProduct = 0.0;
-        for (int i = 0; i < first.getPositionCount(); i++) {
+        for (int i = 0; i < length; i++) {
             double firstValue = reader.read(first, i);
             double secondValue = reader.read(second, i);
             firstMagnitude += firstValue * firstValue;
             secondMagnitude += secondValue * secondValue;
             dotProduct += firstValue * secondValue;
         }
+        cache.store(second, reader, length, secondMagnitude);
+        return cosineSimilarityFrom(first, second, reader, firstMagnitude, secondMagnitude, dotProduct);
+    }
 
+    private static double cosineSimilarityAgainstAKnownMagnitude(
+            Block first,
+            Block second,
+            VectorReader reader,
+            int length,
+            double secondMagnitude)
+    {
+        double firstMagnitude = 0.0;
+        double dotProduct = 0.0;
+        for (int i = 0; i < length; i++) {
+            double firstValue = reader.read(first, i);
+            firstMagnitude += firstValue * firstValue;
+            dotProduct += firstValue * reader.read(second, i);
+        }
+        return cosineSimilarityFrom(first, second, reader, firstMagnitude, secondMagnitude, dotProduct);
+    }
+
+    private static double cosineSimilarityFrom(
+            Block first,
+            Block second,
+            VectorReader reader,
+            double firstMagnitude,
+            double secondMagnitude,
+            double dotProduct)
+    {
         // A product that overflowed to infinity or underflowed to zero says nothing about the
         // vectors themselves, only about the accumulation. Rescale before concluding anything.
         // Splitting into sqrt(a) * sqrt(b) would avoid the overflow without a second pass, but
