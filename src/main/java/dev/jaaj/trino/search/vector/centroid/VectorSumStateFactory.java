@@ -121,6 +121,10 @@ public final class VectorSumStateFactory
         }
 
         @Override
+        @SuppressFBWarnings(
+                value = "EI_EXPOSE_REP2",
+                justification = "The serializer hands over an array it has just allocated and never "
+                        + "touches again; copying it would double the cost of every deserialize.")
         public void replace(double[] sums, long count)
         {
             this.sums = sums;
