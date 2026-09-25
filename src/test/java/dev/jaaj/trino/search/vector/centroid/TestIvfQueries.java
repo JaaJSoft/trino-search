@@ -194,6 +194,27 @@ public class TestIvfQueries
         }
     }
 
+    /**
+     * The initialisation {@code docs/ivf.md} gives. Numbering the rows before sampling them would
+     * leave gaps in the ids, and a gap shifts every position {@code nearest_vector} returns after
+     * it.
+     */
+    @Test
+    public void testDocumentedInitialisationNumbersTheClustersDensely()
+    {
+        assertUpdate(
+                """
+                CREATE TABLE random_centroids AS
+                SELECT CAST(row_number() OVER () AS integer) AS cluster_id, embedding AS centroid
+                FROM (SELECT embedding FROM sample ORDER BY rand() LIMIT %s)
+                """.formatted(CLUSTERS),
+                CLUSTERS);
+
+        assertQuery(
+                "SELECT count(DISTINCT cluster_id), min(cluster_id), max(cluster_id) FROM random_centroids",
+                "SELECT %s, 1, %s".formatted(CLUSTERS, CLUSTERS));
+    }
+
     @Test
     public void testEveryClusterIdIsKept()
     {

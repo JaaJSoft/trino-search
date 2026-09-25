@@ -1,8 +1,8 @@
 # Trino-search
 
 [Trino](https://trino.io) plugin providing search functions as SQL functions. The first family
-covers vectors: distance metrics, normalisation, text embeddings, quantisation and exact
-k-nearest-neighbour search.
+covers vectors: distance metrics, normalisation, text embeddings, quantisation, exact
+k-nearest-neighbour search and IVF clustering.
 
 The plugin exposes functions only, no catalog and no connector: dropping the JAR into the plugin
 directory makes the functions available globally. Vectors are ordinary Trino values, so there is
@@ -42,6 +42,7 @@ GROUP BY category;
 | [k-nearest-neighbour search](docs/knn.md) | `knn_agg`, its overloads, constraints and edge cases |
 | [Quantisation and approximate search](docs/quantization.md) | int8 and binary codes, fitting bounds, recall, oversample and re-rank |
 | [Text embeddings](docs/embeddings.md) | `to_vector_*`, feature hashing and its limits |
+| [Clustering and IVF search](docs/ivf.md) | `nearest_vector`, `vector_avg_agg`, fitting centroids in SQL, probing, maintenance |
 | [Benchmarks](BENCHMARKS.md) | recorded measurements and how to read them |
 
 ## Function index
@@ -54,12 +55,14 @@ GROUP BY category;
 | `knn_agg` | [knn](docs/knn.md) |
 | `vector_bounds_agg`, `quantize_vector_tinyint`, `quantize_vector_varbinary`, `hamming_distance` | [quantisation](docs/quantization.md) |
 | `to_vector_real`, `to_vector_double` | [embeddings](docs/embeddings.md) |
+| `nearest_vector`, `vector_avg_agg` | [ivf](docs/ivf.md) |
 
 ## Status
 
-v1 implements exact KNN. Approximate search is available through quantisation: rank on int8 or
-binary codes, oversample, and re-rank against the exact vectors in SQL. Index-based approximate
-search is planned.
+v1 implements exact KNN. Approximate search is available two ways, both expressed in SQL:
+quantisation, which ranks on int8 or binary codes and re-ranks against the exact vectors, and IVF,
+which reads only the partitions of the clusters nearest to the query. Graph-based search is
+planned.
 
 ## License
 
