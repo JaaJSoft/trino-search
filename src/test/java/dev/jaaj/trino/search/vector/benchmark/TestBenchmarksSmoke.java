@@ -105,6 +105,13 @@ public class TestBenchmarksSmoke
     }
 
     @Test
+    public void testKnnStateSerializer()
+            throws RunnerException
+    {
+        smokeRun(BenchmarkKnnStateSerializer.class, Map.of("k", "10", "metric", "EUCLIDEAN"));
+    }
+
+    @Test
     public void testKnnAccumulator()
             throws RunnerException
     {
