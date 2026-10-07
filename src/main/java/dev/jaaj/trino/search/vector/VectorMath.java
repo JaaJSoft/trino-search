@@ -393,17 +393,118 @@ final class VectorMath
         return sum;
     }
 
+    /**
+     * A sum of squares that overflowed to infinity or underflowed to zero says nothing about the
+     * vector, only about the accumulation, so either one goes through {@link #scaledNorm} whichever
+     * path produced it. That rescaling stays scalar: the fast paths below exist for the vectors it
+     * is never needed for.
+     */
     static double norm(Block vector, VectorReader reader)
     {
-        double sum = 0.0;
-        for (int i = 0; i < vector.getPositionCount(); i++) {
+        double sumOfSquares = sumOfSquares(vector, reader);
+        if (Double.isInfinite(sumOfSquares) || sumOfSquares == 0) {
+            return scaledNorm(vector, reader);
+        }
+        return Math.sqrt(sumOfSquares);
+    }
+
+    /**
+     * The two fast paths are guarded exactly as in {@link #euclideanSquaredBounded}, and for the
+     * reasons given there.
+     */
+    private static double sumOfSquares(Block vector, VectorReader reader)
+    {
+        if (reader == VectorReader.DOUBLE_READER
+                && vector instanceof LongArrayBlock values
+                && !values.mayHaveNull()) {
+            return sumOfSquaresVectorized(values);
+        }
+        if (reader == VectorReader.REAL_READER
+                && vector instanceof IntArrayBlock values
+                && !values.mayHaveNull()) {
+            return sumOfSquaresVectorized(values);
+        }
+        return sumOfSquaresUnrolled(vector, reader);
+    }
+
+    private static double sumOfSquaresVectorized(LongArrayBlock vector)
+    {
+        long[] bits = vector.getRawValues();
+        int base = vector.getRawValuesOffset();
+        int length = vector.getPositionCount();
+
+        DoubleVector sum = DoubleVector.zero(DOUBLE_SPECIES);
+        int lanes = LONG_SPECIES.length();
+        int vectorized = LONG_SPECIES.loopBound(length);
+        int i = 0;
+        for (; i < vectorized; i += lanes) {
+            DoubleVector value = LongVector.fromArray(LONG_SPECIES, bits, base + i).reinterpretAsDoubles();
+            sum = value.fma(value, sum);
+        }
+
+        double total = sum.reduceLanes(VectorOperators.ADD);
+        for (; i < length; i++) {
+            double value = Double.longBitsToDouble(bits[base + i]);
+            total += value * value;
+        }
+        return total;
+    }
+
+    private static double sumOfSquaresVectorized(IntArrayBlock vector)
+    {
+        int[] bits = vector.getRawValues();
+        int base = vector.getRawValuesOffset();
+        int length = vector.getPositionCount();
+
+        DoubleVector sum = DoubleVector.zero(DOUBLE_SPECIES);
+        int lanes = INT_SPECIES.length();
+        int vectorized = INT_SPECIES.loopBound(length);
+        int i = 0;
+        for (; i < vectorized; i += lanes) {
+            FloatVector values = IntVector.fromArray(INT_SPECIES, bits, base + i).reinterpretAsFloats();
+            for (int part = 0; part < WIDENING_PARTS; part++) {
+                DoubleVector value = (DoubleVector) values.convertShape(VectorOperators.F2D, DOUBLE_SPECIES, part);
+                sum = value.fma(value, sum);
+            }
+        }
+
+        double total = sum.reduceLanes(VectorOperators.ADD);
+        for (; i < length; i++) {
+            // The cast is load-bearing: without it this squares in float, which is neither what
+            // the lanes above do nor what VectorReader.read gives every other path.
+            double value = (double) Float.intBitsToFloat(bits[base + i]);
+            total += value * value;
+        }
+        return total;
+    }
+
+    private static double sumOfSquaresUnrolled(Block vector, VectorReader reader)
+    {
+        int length = vector.getPositionCount();
+        double sum0 = 0.0;
+        double sum1 = 0.0;
+        double sum2 = 0.0;
+        double sum3 = 0.0;
+
+        int unrolled = length - (length % UNROLL);
+        int i = 0;
+        for (; i < unrolled; i += UNROLL) {
+            double value0 = reader.read(vector, i);
+            double value1 = reader.read(vector, i + 1);
+            double value2 = reader.read(vector, i + 2);
+            double value3 = reader.read(vector, i + 3);
+            sum0 += value0 * value0;
+            sum1 += value1 * value1;
+            sum2 += value2 * value2;
+            sum3 += value3 * value3;
+        }
+
+        double sum = (sum0 + sum1) + (sum2 + sum3);
+        for (; i < length; i++) {
             double value = reader.read(vector, i);
             sum += value * value;
         }
-        if (Double.isInfinite(sum) || sum == 0) {
-            return scaledNorm(vector, reader);
-        }
-        return Math.sqrt(sum);
+        return sum;
     }
 
     /**

@@ -98,6 +98,13 @@ public class TestBenchmarksSmoke
     }
 
     @Test
+    public void testVectorNorm()
+            throws RunnerException
+    {
+        smokeRun(BenchmarkVectorNorm.class, Map.of("dimension", "8"));
+    }
+
+    @Test
     public void testKnnHeap()
             throws RunnerException
     {
