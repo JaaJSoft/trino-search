@@ -30,8 +30,9 @@ those coordinates, `x.v`, for several directions at once.
 
 Once:
 
-1. **Fit the directions.** Usually four principal components of a sample, stored as rows of a
-   table, [in Python or in SQL](#fitting-the-directions).
+1. **Fit the directions.** Usually four principal components of a sample, fitted with
+   `vector_pca_agg` or in Python and stored as rows of a table
+   ([fitting the directions](#fitting-the-directions)).
 2. **Fill the projection columns.** Every row gets `pc_1` to `pc_4`, computed with
    `vector_projections` [when it is written](#writing-the-projection-columns).
 
@@ -65,6 +66,42 @@ filter above is only safe for unit directions.
 | no directions | an empty array |
 | a direction whose dimension differs from `vector` | error |
 
+## vector_pca_agg
+
+```sql
+vector_pca_agg(array(double), k) -> row(directions array(array(double)), explained_variance_ratio array(double))
+vector_pca_agg(array(real),   k) -> row(directions array(array(real)),   explained_variance_ratio array(double))
+```
+
+The `k` leading principal components of the vectors in each group: `directions` are unit length,
+mutually orthogonal and ordered by decreasing variance, and `explained_variance_ratio[j]` is the
+share of the group's total variance along `directions[j]`, the same figure as scikit-learn's
+`explained_variance_ratio_`. The directions have the element type of the input, so they go
+straight into `vector_projections` alongside the same vectors.
+
+An eigenvector is only defined up to its sign. Each direction's component of largest magnitude is
+made positive, so that refitting on the same data does not flip a projection column.
+
+| Situation | Behaviour |
+| --- | --- |
+| the group is empty | `NULL` |
+| a row whose vector is `NULL` or contains a `NULL` element | the row is ignored |
+| every row of the group was ignored | `NULL` |
+| `k` larger than the dimension | one direction per dimension |
+| no variance at all, as for a single row | an arbitrary orthonormal basis; every ratio is `NaN` |
+| `k` less than 1, or varying within a group | error |
+| vectors of different dimensions in one group | error |
+| an infinite or `NaN` component | error |
+| a dimension above 4096 | error |
+
+The state of a group is its mean and the upper triangle of its covariance matrix, about 2.4 MB
+at dimension 768, and states merge across splits with nothing lost beyond rounding. Each row
+costs about `d^2 / 2` multiply-adds, around 300,000 at dimension 768, so fit on a sample rather
+than on the table. The eigendecomposition runs once per group, on one thread, at a cost cubic in
+the dimension: about half a second at 768 and close to a minute at 3072 on the 2.8 GHz core it
+was measured on. A `GROUP BY` over many groups holds one such state per group; this is a
+function for one fit, or a few.
+
 ## Choosing the directions
 
 Any unit direction keeps the search exact. The directions decide how much is skipped, and the
@@ -88,7 +125,7 @@ of the actual corpus decides whether projection columns are worth adding: four c
 ## Fitting the directions
 
 The directions are fitted once, on a sample: a hundred thousand rows is plenty for four
-components. Whatever does the fit, the result is the same four rows in a table:
+components. Whichever way they are fitted, they end up as four rows of the same table:
 
 ```sql
 CREATE TABLE projections (idx integer, direction array(real));
@@ -97,15 +134,35 @@ CREATE TABLE projections (idx integer, direction array(real));
 The directions never need refitting as the table grows: stale directions skip less, they never
 return a wrong result.
 
-Centring matters for the fit, and only there: principal components are directions of variance
-around the mean, and without centring the first one converges onto the mean itself, which carries
-magnitude but little variance. Both recipes below centre. The projection columns themselves need
-no centring, since the filter compares a row's projection with the query's and a shift applied to
-both cancels out.
+Principal components are directions of variance around the mean, and both routes below centre
+the sample before looking for them; without that, the first direction would point at the mean
+itself, which carries magnitude but little variance. The projection columns need no centring, since
+the filter compares a row's projection with the query's and a shift applied to both cancels out.
+
+### With vector_pca_agg
+
+Keep the fit, check what it captures, then unpack its directions:
+
+```sql
+CREATE TABLE pca AS
+SELECT vector_pca_agg(embedding, 4) AS fit
+FROM sample;
+
+SELECT fit.explained_variance_ratio FROM pca;   -- the number that decides
+
+CREATE TABLE projections AS
+SELECT CAST(idx AS integer) AS idx, direction
+FROM pca
+CROSS JOIN UNNEST(fit.directions) WITH ORDINALITY AS t(direction, idx);
+```
+
+Keeping the fit in a table means the sample is read once, however many times the result is looked
+at.
 
 ### In Python
 
-The simplest route: pull the sample out, fit with scikit-learn, write the four directions back.
+The route for a dimension above 4096, or when the sample is already in a notebook: pull it out, fit
+with scikit-learn, write the four directions back.
 
 ```python
 import numpy as np
@@ -131,103 +188,6 @@ for idx, direction in enumerate(pca.components_, start=1):              # orthon
 Fetching rows through the client is the slow part, which is one more reason to fit on a sample of
 a hundred thousand rows rather than a million. For larger samples, reading the table's data files
 directly, with PyIceberg for instance, avoids the round trip through the coordinator.
-
-### In SQL
-
-The same directions can be found without leaving Trino and without an eigensolver. Subspace
-iteration repeats two steps: multiply the current directions by the covariance, then make them
-orthonormal again. They converge onto the principal components in order of variance. Multiplying
-a direction `v` by the covariance is an average over the rows, `avg(y * (y.v))` where `y` is a row
-minus the mean, so a step is `vector_projections` and `vector_avg_agg` in one statement. The
-statements are longer than the Python above, but nothing leaves the cluster.
-
-#### The mean
-
-```sql
-CREATE TABLE pca_mean AS
-SELECT vector_avg_agg(CAST(embedding AS array(double))) AS mu
-FROM sample;
-```
-
-#### The starting directions
-
-Any four rows will do:
-
-```sql
-CREATE TABLE pca_directions AS
-SELECT CAST(row_number() OVER () AS integer) AS idx, CAST(embedding AS array(double)) AS direction
-FROM (SELECT embedding FROM sample ORDER BY rand() LIMIT 4);
-```
-
-#### One iteration
-
-Repeat this statement, swapping the new table in each time:
-
-```sql
-CREATE TABLE pca_directions_next AS
-WITH basis AS (SELECT array_agg(direction ORDER BY idx) AS directions FROM pca_directions),
-centred AS (
-    SELECT zip_with(CAST(s.embedding AS array(double)), m.mu, (x, mu) -> x - mu) AS y
-    FROM sample s CROSS JOIN pca_mean m
-),
-projected AS (
-    SELECT c.y, vector_projections(c.y, b.directions) AS p
-    FROM centred c CROSS JOIN basis b
-),
-products AS (
-    SELECT array_agg(w ORDER BY j) AS ws
-    FROM (SELECT j, vector_avg_agg(transform(y, x -> x * p[j])) AS w
-          FROM projected CROSS JOIN UNNEST(sequence(1, cardinality(p))) AS t(j)
-          GROUP BY j)
-)
-SELECT CAST(idx AS integer) AS idx, direction
-FROM products
-CROSS JOIN UNNEST(reduce(
-    ws,
-    CAST(ARRAY[] AS array(array(double))),
-    (done, w) -> done || normalize_vector(
-        reduce(done, w, (r, v) -> zip_with(r, v, (x, e) -> x - dot_product(r, v) * e), r -> r)),
-    done -> done)) WITH ORDINALITY AS u(direction, idx);
-
-DROP TABLE pca_directions;
-ALTER TABLE pca_directions_next RENAME TO pca_directions;
-```
-
-`products` is the multiplication by the covariance: one `vector_avg_agg` per direction, all in a
-single scan of the sample. The `reduce` at the end is Gram-Schmidt: each new direction has its
-components along the earlier ones subtracted, then is scaled to unit length. That keeps the
-directions orthonormal, which the radius guess in step 1 of the search relies on, and keeps them
-from all converging onto the first component.
-
-Each iteration reads the sample once. How many are needed depends on how quickly the variance
-decays past the fourth component, so measure rather than guess: stop when the explained variance
-no longer grows from one iteration to the next.
-
-#### The explained variance
-
-The fraction of the sample's variance each direction captures, the same figure as scikit-learn's
-`explained_variance_ratio_`:
-
-```sql
-WITH basis AS (SELECT array_agg(direction ORDER BY idx) AS directions FROM pca_directions),
-centred AS (
-    SELECT zip_with(CAST(s.embedding AS array(double)), m.mu, (x, mu) -> x - mu) AS y
-    FROM sample s CROSS JOIN pca_mean m
-)
-SELECT j, avg(p[j] * p[j]) / avg(dot_product(y, y)) AS explained_variance_ratio
-FROM (SELECT c.y, vector_projections(c.y, b.directions) AS p FROM centred c CROSS JOIN basis b)
-CROSS JOIN UNNEST(sequence(1, cardinality(p))) AS t(j)
-GROUP BY j
-ORDER BY j;
-```
-
-#### Keeping the result
-
-```sql
-INSERT INTO projections
-SELECT idx, CAST(direction AS array(real))
-FROM pca_directions;
-```
 
 ## Writing the projection columns
 
