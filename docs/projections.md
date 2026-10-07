@@ -31,7 +31,7 @@ those coordinates, `x.v`, for several directions at once.
 Once:
 
 1. **Fit the directions.** Usually four principal components of a sample, stored as rows of a
-   table. This can be done [in SQL](#fitting-the-directions-in-sql).
+   table, [in Python or in SQL](#fitting-the-directions).
 2. **Fill the projection columns.** Every row gets `pc_1` to `pc_4`, computed with
    `vector_projections` [when it is written](#writing-the-projection-columns).
 
@@ -85,19 +85,63 @@ These are orders of magnitude for typical embedding data, not measurements. The 
 of the actual corpus decides whether projection columns are worth adding: four components carrying
 30 percent of the variance give the factor of 3 above, four carrying 3 percent give nothing.
 
-## Fitting the directions in SQL
+## Fitting the directions
 
-Principal components are the leading eigenvectors of the covariance matrix, but they can be found
-without an eigensolver. Subspace iteration repeats two steps: multiply the current directions by
-the covariance, then make them orthonormal again. They converge onto the principal components in
-order of variance. Multiplying a direction `v` by the covariance is an average over the rows,
-`avg(y * (y.v))` where `y` is a row minus the mean, so a step is `vector_projections` and
-`vector_avg_agg` in one statement.
+The directions are fitted once, on a sample: a hundred thousand rows is plenty for four
+components. Whatever does the fit, the result is the same four rows in a table:
 
-Fit on a sample: a million rows is plenty. The walkthrough fits four directions from a table
-`sample(id, embedding array(real))`.
+```sql
+CREATE TABLE projections (idx integer, direction array(real));
+```
 
-### The mean
+The directions never need refitting as the table grows: stale directions skip less, they never
+return a wrong result.
+
+Centring matters for the fit, and only there: principal components are directions of variance
+around the mean, and without centring the first one converges onto the mean itself, which carries
+magnitude but little variance. Both recipes below centre. The projection columns themselves need
+no centring, since the filter compares a row's projection with the query's and a shift applied to
+both cancels out.
+
+### In Python
+
+The simplest route: pull the sample out, fit with scikit-learn, write the four directions back.
+
+```python
+import numpy as np
+import trino
+from sklearn.decomposition import PCA
+
+conn = trino.dbapi.connect(host="trino.example.com", port=443, http_scheme="https",
+                           user="me", catalog="iceberg", schema="search")
+cur = conn.cursor()
+
+cur.execute("SELECT embedding FROM sample")
+X = np.asarray([row[0] for row in cur.fetchall()], dtype=np.float32)   # (n, 768)
+
+pca = PCA(n_components=4, svd_solver="randomized").fit(X)               # centres X itself
+print(pca.explained_variance_ratio_)                                     # the number that decides
+
+for idx, direction in enumerate(pca.components_, start=1):              # orthonormal, by variance
+    cur.execute("INSERT INTO projections VALUES (?, CAST(? AS array(real)))",
+                (idx, [float(x) for x in direction]))
+    cur.fetchall()
+```
+
+Fetching rows through the client is the slow part, which is one more reason to fit on a sample of
+a hundred thousand rows rather than a million. For larger samples, reading the table's data files
+directly, with PyIceberg for instance, avoids the round trip through the coordinator.
+
+### In SQL
+
+The same directions can be found without leaving Trino and without an eigensolver. Subspace
+iteration repeats two steps: multiply the current directions by the covariance, then make them
+orthonormal again. They converge onto the principal components in order of variance. Multiplying
+a direction `v` by the covariance is an average over the rows, `avg(y * (y.v))` where `y` is a row
+minus the mean, so a step is `vector_projections` and `vector_avg_agg` in one statement. The
+statements are longer than the Python above, but nothing leaves the cluster.
+
+#### The mean
 
 ```sql
 CREATE TABLE pca_mean AS
@@ -105,11 +149,7 @@ SELECT vector_avg_agg(CAST(embedding AS array(double))) AS mu
 FROM sample;
 ```
 
-Centring matters here, and only here. Without it the first direction converges onto the mean,
-which carries magnitude but little variance. The projection columns themselves need no centring:
-the filter compares a row's projection with the query's, and a shift applied to both cancels out.
-
-### The starting directions
+#### The starting directions
 
 Any four rows will do:
 
@@ -119,7 +159,7 @@ SELECT CAST(row_number() OVER () AS integer) AS idx, CAST(embedding AS array(dou
 FROM (SELECT embedding FROM sample ORDER BY rand() LIMIT 4);
 ```
 
-### One iteration
+#### One iteration
 
 Repeat this statement, swapping the new table in each time:
 
@@ -163,10 +203,10 @@ Each iteration reads the sample once. How many are needed depends on how quickly
 decays past the fourth component, so measure rather than guess: stop when the explained variance
 no longer grows from one iteration to the next.
 
-### The explained variance
+#### The explained variance
 
-The fraction of the sample's variance each direction captures, which is the number that decides
-whether the columns are worth adding:
+The fraction of the sample's variance each direction captures, the same figure as scikit-learn's
+`explained_variance_ratio_`:
 
 ```sql
 WITH basis AS (SELECT array_agg(direction ORDER BY idx) AS directions FROM pca_directions),
@@ -181,20 +221,13 @@ GROUP BY j
 ORDER BY j;
 ```
 
-### Keeping the result
+#### Keeping the result
 
 ```sql
-CREATE TABLE projections AS
-SELECT idx, CAST(direction AS array(real)) AS direction
+INSERT INTO projections
+SELECT idx, CAST(direction AS array(real))
 FROM pca_directions;
 ```
-
-The directions never need refitting as the table grows: stale directions skip less, they never
-return a wrong result.
-
-The fit can also be done outside Trino. scikit-learn's `PCA(n_components=4).fit(sample)` gives the
-same directions in `components_` and the same ratios in `explained_variance_ratio_`, and the four
-rows go into the same `projections` table.
 
 ## Writing the projection columns
 
