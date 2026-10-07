@@ -20,6 +20,7 @@ import io.trino.spi.block.Block;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.block.RowBlockBuilder;
 import io.trino.spi.block.SqlRow;
+import io.trino.spi.block.ValueBlock;
 import io.trino.spi.function.AccumulatorStateSerializer;
 import io.trino.spi.function.TypeParameter;
 import io.trino.spi.type.ArrayType;
@@ -36,16 +37,21 @@ import static java.util.Objects.requireNonNull;
 public final class KnnStateSerializer
         implements AccumulatorStateSerializer<KnnState>
 {
-    private final RowType neighbourType;
-    private final ArrayType neighbourArrayType;
+    private static final ArrayType DISTANCE_ARRAY_TYPE = new ArrayType(DOUBLE);
+
+    private final ArrayType keyArrayType;
     private final RowType serializedType;
 
+    /**
+     * The neighbours travel as two parallel arrays, keys and distances, rather than one array of
+     * {@code row(K, double)}: two flat blocks build and read without a row entry per neighbour,
+     * and this is the widest value the aggregation ships between stages.
+     */
     public KnnStateSerializer(@TypeParameter("K") Type keyType)
     {
         requireNonNull(keyType, "keyType is null");
-        this.neighbourType = RowType.anonymous(List.of(keyType, DOUBLE));
-        this.neighbourArrayType = new ArrayType(neighbourType);
-        this.serializedType = RowType.anonymous(List.of(BIGINT, VARCHAR, neighbourArrayType));
+        this.keyArrayType = new ArrayType(keyType);
+        this.serializedType = RowType.anonymous(List.of(BIGINT, VARCHAR, keyArrayType, DISTANCE_ARRAY_TYPE));
     }
 
     @Override
@@ -68,15 +74,18 @@ public final class KnnStateSerializer
             return;
         }
 
+        List<KnnHeap.Neighbour> neighbours = heap.drainUnsorted();
         ((RowBlockBuilder) out).buildEntry(fieldBuilders -> {
             BIGINT.writeLong(fieldBuilders.get(0), state.getK());
             VARCHAR.writeString(fieldBuilders.get(1), state.getMetric().sqlName());
-            ((ArrayBlockBuilder) fieldBuilders.get(2)).buildEntry(elementBuilder -> {
-                for (KnnHeap.Neighbour neighbour : heap.drainSorted()) {
-                    ((RowBlockBuilder) elementBuilder).buildEntry(neighbourFields -> {
-                        neighbourFields.get(0).append(neighbour.key(), 0);
-                        DOUBLE.writeDouble(neighbourFields.get(1), neighbour.distance());
-                    });
+            ((ArrayBlockBuilder) fieldBuilders.get(2)).buildEntry(keyBuilder -> {
+                for (KnnHeap.Neighbour neighbour : neighbours) {
+                    keyBuilder.append(neighbour.key(), 0);
+                }
+            });
+            ((ArrayBlockBuilder) fieldBuilders.get(3)).buildEntry(distanceBuilder -> {
+                for (KnnHeap.Neighbour neighbour : neighbours) {
+                    DOUBLE.writeDouble(distanceBuilder, neighbour.distance());
                 }
             });
         });
@@ -100,11 +109,11 @@ public final class KnnStateSerializer
         // brand new heap, never the one already attached to state (if any).
         state.setHeap(new KnnHeap(k, metric.higherIsCloser()));
 
-        Block neighbours = neighbourArrayType.getObject(row.getRawFieldBlock(2), offset);
-        for (int i = 0; i < neighbours.getPositionCount(); i++) {
-            SqlRow neighbour = neighbourType.getObject(neighbours, i);
-            double distance = DOUBLE.getDouble(neighbour.getRawFieldBlock(1), neighbour.getRawIndex());
-            state.addToHeap(neighbour.getUnderlyingFieldBlock(0), neighbour.getUnderlyingFieldPosition(0), distance);
+        Block keys = keyArrayType.getObject(row.getRawFieldBlock(2), offset);
+        Block distances = DISTANCE_ARRAY_TYPE.getObject(row.getRawFieldBlock(3), offset);
+        ValueBlock keyValues = keys.getUnderlyingValueBlock();
+        for (int i = 0; i < keys.getPositionCount(); i++) {
+            state.addToHeap(keyValues, keys.getUnderlyingValuePosition(i), DOUBLE.getDouble(distances, i));
         }
     }
 }

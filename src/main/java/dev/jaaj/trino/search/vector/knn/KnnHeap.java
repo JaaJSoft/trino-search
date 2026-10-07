@@ -129,12 +129,22 @@ public final class KnnHeap
 
     public List<Neighbour> drainSorted()
     {
+        List<Neighbour> neighbours = drainUnsorted();
+        Comparator<Neighbour> byDistance = Comparator.comparingDouble(Neighbour::distance);
+        neighbours.sort(higherIsCloser ? byDistance.reversed() : byDistance);
+        return neighbours;
+    }
+
+    /**
+     * The neighbours in heap order. Adding them in this order to an empty heap of the same
+     * capacity rebuilds the same heap without a single swap.
+     */
+    public List<Neighbour> drainUnsorted()
+    {
         List<Neighbour> neighbours = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             neighbours.add(new Neighbour(keys[i], distances[i]));
         }
-        Comparator<Neighbour> byDistance = Comparator.comparingDouble(Neighbour::distance);
-        neighbours.sort(higherIsCloser ? byDistance.reversed() : byDistance);
         return neighbours;
     }
 

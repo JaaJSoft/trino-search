@@ -2,7 +2,8 @@
 
 [Trino](https://trino.io) plugin providing search functions as SQL functions. The first family
 covers vectors: distance metrics, normalisation, text embeddings, quantisation, exact
-k-nearest-neighbour search and IVF clustering.
+k-nearest-neighbour search, IVF clustering, HNSW graph search and projection columns for data
+skipping.
 
 The plugin exposes functions only, no catalog and no connector: dropping the JAR into the plugin
 directory makes the functions available globally. Vectors are ordinary Trino values, so there is
@@ -43,6 +44,7 @@ GROUP BY category;
 | [Quantisation and approximate search](docs/quantization.md) | int8 and binary codes, fitting bounds, recall, oversample and re-rank |
 | [Text embeddings](docs/embeddings.md) | `to_vector_*`, feature hashing and its limits |
 | [Clustering and IVF search](docs/ivf.md) | `nearest_vector`, `vector_avg_agg`, fitting centroids in SQL, probing, maintenance |
+| [Graph search (HNSW)](docs/hnsw.md) | `hnsw_build_agg`, `hnsw_search`, one graph per partition, sizing, recall, limitations |
 | [Projection columns and data skipping](docs/projections.md) | `vector_projections`, `vector_pca_agg`, choosing and fitting directions, exact search under a range filter, Iceberg details |
 | [Benchmarks](BENCHMARKS.md) | recorded measurements and how to read them |
 
@@ -57,15 +59,17 @@ GROUP BY category;
 | `vector_bounds_agg`, `quantize_vector_tinyint`, `quantize_vector_varbinary`, `hamming_distance` | [quantisation](docs/quantization.md) |
 | `to_vector_real`, `to_vector_double` | [embeddings](docs/embeddings.md) |
 | `nearest_vector`, `vector_avg_agg` | [ivf](docs/ivf.md) |
+| `hnsw_build_agg`, `hnsw_search` | [hnsw](docs/hnsw.md) |
 | `vector_projections`, `vector_pca_agg` | [projections](docs/projections.md) |
 
 ## Status
 
-v1 implements exact KNN. Approximate search is available two ways, both expressed in SQL:
-quantisation, which ranks on int8 or binary codes and re-ranks against the exact vectors, and IVF,
-which reads only the partitions of the clusters nearest to the query. Exact search can also skip
-files, through projection columns and a range predicate the table's statistics can prune on.
-Graph-based search is planned.
+v1 implements exact KNN. Approximate search is available three ways, all expressed in SQL:
+quantisation, which ranks on int8 or binary codes and re-ranks against the exact vectors; IVF,
+which reads only the partitions of the clusters nearest to the query; and HNSW, which builds one
+graph per partition into a table of your own and searches it instead of the rows. Exact search can
+also skip files, through projection columns and a range filter the table's statistics can prune
+on.
 
 ## License
 

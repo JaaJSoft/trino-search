@@ -404,4 +404,26 @@ public class TestKnnHeap
 
         assertThat(actual).isEqualTo(expected);
     }
+
+    @Test
+    public void testDrainUnsortedHoldsTheSameNeighboursAsDrainSorted()
+    {
+        for (boolean higherIsCloser : new boolean[] {false, true}) {
+            KnnHeap heap = new KnnHeap(7, higherIsCloser);
+            Random random = new Random(42);
+            for (int i = 0; i < 500; i++) {
+                add(heap, i, random.nextDouble() * 1000);
+            }
+
+            assertThat(neighboursOf(heap.drainUnsorted()))
+                    .containsExactlyInAnyOrderElementsOf(neighboursOf(heap.drainSorted()));
+        }
+    }
+
+    private static List<String> neighboursOf(List<KnnHeap.Neighbour> neighbours)
+    {
+        return neighbours.stream()
+                .map(neighbour -> BIGINT.getLong(neighbour.key(), 0) + "@" + neighbour.distance())
+                .toList();
+    }
 }
