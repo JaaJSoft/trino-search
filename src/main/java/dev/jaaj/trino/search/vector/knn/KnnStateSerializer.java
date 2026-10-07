@@ -74,7 +74,7 @@ public final class KnnStateSerializer
             return;
         }
 
-        List<KnnHeap.Neighbour> neighbours = heap.drainSorted();
+        List<KnnHeap.Neighbour> neighbours = heap.drainUnsorted();
         ((RowBlockBuilder) out).buildEntry(fieldBuilders -> {
             BIGINT.writeLong(fieldBuilders.get(0), state.getK());
             VARCHAR.writeString(fieldBuilders.get(1), state.getMetric().sqlName());
