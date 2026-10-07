@@ -16,8 +16,8 @@ not to edit.
 
 `README.md` stays short: what the plugin is, how to install it, one quick start, and an index.
 Everything else belongs to a themed page under `docs/` (`vectors.md`, `knn.md`,
-`quantization.md`, `embeddings.md`), one per family of functions, and a new family gets a new
-page rather than a new README section.
+`quantization.md`, `embeddings.md`, `ivf.md`, `hnsw.md`, `projections.md`), one per family of
+functions, and a new family gets a new page rather than a new README section.
 
 ## Workflow artifacts are never committed
 
