@@ -142,7 +142,7 @@ public final class VectorBlocks
             widestRange = Math.max(widestRange, maximums[i] - minimums[i]);
         }
         double scale = widestRange / QuantizationBounds.CODE_LEVELS;
-        return QuantizationBounds.forTesting(offsets, scale);
+        return QuantizationBounds.of(offsets, scale);
     }
 
     /**

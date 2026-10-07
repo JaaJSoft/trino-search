@@ -55,7 +55,7 @@ public class TestQuantizedVectorMath
     @Test
     public void testEuclideanSquaredAgainstAHandComputedValue()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, 1.0);
+        QuantizationBounds bounds = QuantizationBounds.of(new double[] {0, 0}, 1.0);
         assertThat(QuantizedVectorMath.euclideanSquared(codes(0, 0), codes(3, 4), bounds)).isEqualTo(25.0);
     }
 
@@ -66,8 +66,8 @@ public class TestQuantizedVectorMath
     @Test
     public void testEuclideanSquaredIgnoresTheOffsets()
     {
-        QuantizationBounds atZero = QuantizationBounds.forTesting(new double[] {0, 0}, 1.0);
-        QuantizationBounds shifted = QuantizationBounds.forTesting(new double[] {17.5, -3.25}, 1.0);
+        QuantizationBounds atZero = QuantizationBounds.of(new double[] {0, 0}, 1.0);
+        QuantizationBounds shifted = QuantizationBounds.of(new double[] {17.5, -3.25}, 1.0);
         assertThat(QuantizedVectorMath.euclideanSquared(codes(0, 0), codes(3, 4), shifted))
                 .isEqualTo(QuantizedVectorMath.euclideanSquared(codes(0, 0), codes(3, 4), atZero));
     }
@@ -75,7 +75,7 @@ public class TestQuantizedVectorMath
     @Test
     public void testEuclideanSquaredAppliesTheScale()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, 2.0);
+        QuantizationBounds bounds = QuantizationBounds.of(new double[] {0, 0}, 2.0);
         // (2 * 3)^2 + (2 * 4)^2 = 36 + 64
         assertThat(QuantizedVectorMath.euclideanSquared(codes(0, 0), codes(3, 4), bounds)).isEqualTo(100.0);
     }
@@ -83,7 +83,7 @@ public class TestQuantizedVectorMath
     @Test
     public void testManhattanAppliesTheScale()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, 2.0);
+        QuantizationBounds bounds = QuantizationBounds.of(new double[] {0, 0}, 2.0);
         assertThat(QuantizedVectorMath.manhattan(codes(0, 0), codes(3, -4), bounds)).isEqualTo(6.0 + 8.0);
     }
 
@@ -106,7 +106,7 @@ public class TestQuantizedVectorMath
     @Test
     public void testManhattanMatchesTheDequantiseThenComputeReferenceWithANegativeScale()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, -2.0);
+        QuantizationBounds bounds = QuantizationBounds.of(new double[] {0, 0}, -2.0);
         Block first = codes(0, 0);
         Block second = codes(3, -4);
         assertThat(QuantizedVectorMath.manhattan(first, second, bounds))
@@ -122,7 +122,7 @@ public class TestQuantizedVectorMath
         for (int i = 0; i < dimension; i++) {
             offsets[i] = random.nextDouble(-5, 5);
         }
-        QuantizationBounds bounds = QuantizationBounds.forTesting(offsets, random.nextDouble(-0.5, 0.5));
+        QuantizationBounds bounds = QuantizationBounds.of(offsets, random.nextDouble(-0.5, 0.5));
 
         for (int trial = 0; trial < 20; trial++) {
             int[] left = new int[dimension];
@@ -141,7 +141,7 @@ public class TestQuantizedVectorMath
     @Test
     public void testEuclideanIsTheRootOfTheSquare()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, 1.0);
+        QuantizationBounds bounds = QuantizationBounds.of(new double[] {0, 0}, 1.0);
         assertThat(QuantizedVectorMath.euclidean(codes(0, 0), codes(3, 4), bounds)).isEqualTo(5.0);
     }
 
@@ -154,7 +154,7 @@ public class TestQuantizedVectorMath
         for (int i = 0; i < dimension; i++) {
             offsets[i] = random.nextDouble(-5, 5);
         }
-        QuantizationBounds bounds = QuantizationBounds.forTesting(offsets, random.nextDouble(0.001, 0.5));
+        QuantizationBounds bounds = QuantizationBounds.of(offsets, random.nextDouble(0.001, 0.5));
 
         for (int trial = 0; trial < 20; trial++) {
             int[] left = new int[dimension];
@@ -178,7 +178,7 @@ public class TestQuantizedVectorMath
     @Test
     public void testBoundedFormAgreesBelowTheLimitAndGivesUpAbove()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, 1.0);
+        QuantizationBounds bounds = QuantizationBounds.of(new double[] {0, 0}, 1.0);
         assertThat(QuantizedVectorMath.euclideanSquaredBounded(codes(0, 0), codes(3, 4), bounds, 100.0))
                 .isEqualTo(25.0);
         assertThat(QuantizedVectorMath.euclideanSquaredBounded(codes(0, 0), codes(3, 4), bounds, 1.0))
@@ -199,7 +199,7 @@ public class TestQuantizedVectorMath
     public void testBoundedFormAbandonsInsideTheVectorisedLoop()
     {
         int length = 512;
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[length], 1.0);
+        QuantizationBounds bounds = QuantizationBounds.of(new double[length], 1.0);
 
         int[] origin = new int[length];
         int[] spike = new int[length];
@@ -220,7 +220,7 @@ public class TestQuantizedVectorMath
     public void testBoundedFormAbandonsOnTheGeneralPathToo()
     {
         int length = 512;
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[length], 1.0);
+        QuantizationBounds bounds = QuantizationBounds.of(new double[length], 1.0);
 
         int[] values = new int[2 * length];
         values[length] = 3;
@@ -257,7 +257,7 @@ public class TestQuantizedVectorMath
     @Test
     public void testDotProductAgainstAHandComputedValue()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, 1.0);
+        QuantizationBounds bounds = QuantizationBounds.of(new double[] {0, 0}, 1.0);
         assertThat(QuantizedVectorMath.dotProduct(codes(1, 2), codes(3, 4), bounds)).isEqualTo(11.0);
     }
 
@@ -268,7 +268,7 @@ public class TestQuantizedVectorMath
     @Test
     public void testDotProductReadsTheOffsets()
     {
-        QuantizationBounds shifted = QuantizationBounds.forTesting(new double[] {10, 10}, 1.0);
+        QuantizationBounds shifted = QuantizationBounds.of(new double[] {10, 10}, 1.0);
         // (10+1)*(10+3) + (10+2)*(10+4) = 143 + 168
         assertThat(QuantizedVectorMath.dotProduct(codes(1, 2), codes(3, 4), shifted)).isEqualTo(311.0);
     }
@@ -276,14 +276,14 @@ public class TestQuantizedVectorMath
     @Test
     public void testCosineSimilarityOfIdenticalVectorsIsOne()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, 1.0);
+        QuantizationBounds bounds = QuantizationBounds.of(new double[] {0, 0}, 1.0);
         assertThat(QuantizedVectorMath.cosineSimilarity(codes(3, 4), codes(3, 4), bounds)).isEqualTo(1.0);
     }
 
     @Test
     public void testCosineSimilarityOfOrthogonalVectorsIsZero()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, 1.0);
+        QuantizationBounds bounds = QuantizationBounds.of(new double[] {0, 0}, 1.0);
         assertThat(QuantizedVectorMath.cosineSimilarity(codes(5, 0), codes(0, 7), bounds)).isEqualTo(0.0);
     }
 
@@ -296,7 +296,7 @@ public class TestQuantizedVectorMath
         for (int i = 0; i < dimension; i++) {
             offsets[i] = random.nextDouble(-2, 2);
         }
-        QuantizationBounds bounds = QuantizationBounds.forTesting(offsets, random.nextDouble(0.001, 0.1));
+        QuantizationBounds bounds = QuantizationBounds.of(offsets, random.nextDouble(0.001, 0.1));
 
         int[] left = new int[dimension];
         int[] right = new int[dimension];
@@ -317,7 +317,7 @@ public class TestQuantizedVectorMath
     @Test
     public void testDictionaryBlocksTakeTheGeneralPath()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, 1.0);
+        QuantizationBounds bounds = QuantizationBounds.of(new double[] {0, 0}, 1.0);
         Block underlying = codes(0, 0, 3, 4);
         Block first = DictionaryBlock.create(2, underlying, new int[] {0, 1});
         Block second = DictionaryBlock.create(2, underlying, new int[] {2, 3});
@@ -334,7 +334,7 @@ public class TestQuantizedVectorMath
         SplittableRandom random = new SplittableRandom(101);
         for (int dimension : new int[] {1, 7, 15, 16, 17, 31, 32, 33, 63, 64, 65, 128, 768}) {
             double[] offsets = new double[dimension];
-            QuantizationBounds bounds = QuantizationBounds.forTesting(offsets, 0.25);
+            QuantizationBounds bounds = QuantizationBounds.of(offsets, 0.25);
 
             int[] left = new int[dimension];
             int[] right = new int[dimension];
@@ -362,7 +362,7 @@ public class TestQuantizedVectorMath
     public void testEuclideanSquaredDoesNotOverflowPastThirtyThreeThousandComponents()
     {
         int dimension = 400_000;
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[dimension], 1.0);
+        QuantizationBounds bounds = QuantizationBounds.of(new double[dimension], 1.0);
 
         byte[] leftBytes = new byte[dimension];
         byte[] rightBytes = new byte[dimension];
