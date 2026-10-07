@@ -22,7 +22,7 @@ import io.trino.spi.function.AccumulatorStateMetadata;
         stateFactoryClass = KnnStateFactory.class,
         stateSerializerClass = KnnStateSerializer.class,
         typeParameters = "K",
-        serializedType = "ROW(BIGINT, VARCHAR, ARRAY(ROW(K, DOUBLE)))")
+        serializedType = "ROW(BIGINT, VARCHAR, ARRAY(K), ARRAY(DOUBLE))")
 public interface KnnState
         extends AccumulatorState
 {

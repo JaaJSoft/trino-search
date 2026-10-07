@@ -156,6 +156,28 @@ public class TestKnnAggregationDistributed
         assertEqualsIgnoreOrder(actual, expected);
     }
 
+    /**
+     * A null key is still a neighbour, so it crosses the serialize/combine boundary as a null
+     * element of the serialized keys and has to come back next to its own distance.
+     */
+    @Test
+    public void testNullKeysAcrossSplits()
+    {
+        MaterializedResult actual = computeActual(
+                """
+                SELECT transform(
+                        knn_agg(CASE WHEN orderkey <= 3 THEN NULL ELSE orderkey END, ARRAY[CAST(orderkey AS double), 0.0], ARRAY[0.0, 0.0], 5, 'euclidean'),
+                        x -> ROW(x[1], x[2]))
+                FROM tpch.tiny.orders
+                """);
+        MaterializedResult expected = computeActual(
+                """
+                SELECT array_agg(ROW(CASE WHEN orderkey <= 3 THEN NULL ELSE orderkey END, CAST(orderkey AS double)) ORDER BY orderkey)
+                FROM (SELECT orderkey FROM tpch.tiny.orders ORDER BY orderkey LIMIT 5)
+                """);
+        assertEqualsIgnoreOrder(actual, expected);
+    }
+
     @Test
     public void testCosineMetricMatchesTheNativeFunctionAcrossSplits()
     {
