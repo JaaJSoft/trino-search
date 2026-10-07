@@ -1,12 +1,49 @@
 # Projection columns and data skipping
 
-Table formats such as Iceberg skip files on per-column `min`/`max` statistics, and an
-`array(real)` column has none they can use. Projecting each vector onto a few fixed directions
-and storing the results as ordinary `double` columns gives the table something to skip on, and
-the search stays exact.
+A nearest-neighbour query over an Iceberg table reads every vector. Iceberg skips files using the
+`min`/`max` it keeps for each column of each file, and it keeps nothing usable for an
+`array(real)` column, so there is nothing to skip on.
 
-This needs no index, no centroids and no state in the plugin: the directions are an ordinary
-table, the projections ordinary columns and the pruning an ordinary range predicate.
+Projection columns fix that. Each row stores a few extra `double` columns, its coordinates along a
+few well-chosen directions. A filter on those columns can skip files, and the search stays exact.
+
+## The idea
+
+Picture the vectors in two dimensions, and store each one's `x` coordinate in a column `pc_1`.
+
+Every point within distance `r` of a query `q` has its `x` coordinate within `r` of `q`'s. So the
+filter
+
+```sql
+WHERE pc_1 BETWEEN q_x - r AND q_x + r
+```
+
+cannot drop a single neighbour within `r`. It is an ordinary range filter on a `double` column,
+which is exactly what Iceberg can skip files on: any file whose `pc_1` range lies outside the
+interval is never read.
+
+The same holds in any dimension, for any unit direction `v` in place of the `x` axis:
+`|x.v - q.v| <= ||x - q||`, which is the Cauchy-Schwarz inequality. `vector_projections` computes
+those coordinates, `x.v`, for several directions at once.
+
+## In short
+
+Once:
+
+1. **Fit the directions.** Usually four principal components of a sample, stored as rows of a
+   table. This can be done [in SQL](#fitting-the-directions-in-sql).
+2. **Fill the projection columns.** Every row gets `pc_1` to `pc_4`, computed with
+   `vector_projections` [when it is written](#writing-the-projection-columns).
+
+On every query:
+
+1. **Guess a radius `rho`** from the four `double` columns alone, without reading any vector.
+2. **Run `knn_agg` under a box filter** of half-width `rho` on the four columns. Iceberg skips the
+   files outside the box.
+3. **Check.** If `k` rows came back and the k-th is within `rho`, they are the true top k.
+   Otherwise double `rho` and run step 2 again.
+
+The check is what makes the search exact: a wrong guess costs a retry, never a wrong answer.
 
 ## vector_projections
 
@@ -18,7 +55,7 @@ vector_projections(array(real),   array(array(real)))   -> array(double)
 Element `j` of the result is `dot_product(vector, directions[j])`. Projecting onto N directions
 this way is one call rather than N `dot_product` calls, which matters on the write path where it
 runs once per row. Directions are used as given: the function does not normalise them, and the
-bound below needs unit directions.
+filter above is only safe for unit directions.
 
 | Situation | Behaviour |
 | --- | --- |
@@ -28,66 +65,136 @@ bound below needs unit directions.
 | no directions | an empty array |
 | a direction whose dimension differs from `vector` | error |
 
-## Why a range predicate is exact
-
-For a unit vector `v`, Cauchy-Schwarz gives `|x.v - q.v| <= ||x - q||`. If every neighbour wanted
-is within `R` of the query `q`, every one of them has `x.v` in `[q.v - R, q.v + R]`, which is a
-range predicate on a scalar column. That holds for any unit direction: the choice of directions
-only decides how much the range prunes, never whether the result is right.
-
-On orthonormal directions, Bessel's inequality adds a second bound: the euclidean distance between
-two vectors' projections never exceeds the distance between the vectors. That is what lets a
-radius be estimated from the projection columns alone, below.
-
 ## Choosing the directions
 
-The directions decide everything about how much is pruned, and the obvious choices prune nothing.
+Any unit direction keeps the search exact. The directions decide how much is skipped, and the
+obvious choices skip nothing.
 
-- **Raw components.** Storing a few dimensions as columns costs nothing to compute and skips
-  nothing. For normalised embeddings at dimension 768 a component has a standard deviation of
-  about 0.036, so the difference between a row's and the query's is about 0.051, while the radius
-  of a neighbour at cosine similarity 0.9 is 0.45. The range is nine standard deviations wide.
-  `R` bounds the whole difference and a component only sees `1/d` of it, so this gets worse with
-  the dimension.
+- **Raw components.** Storing a few of the vector's own dimensions as columns costs nothing to
+  compute and skips nothing. For normalised embeddings at dimension 768 a component has a standard
+  deviation of about 0.036, so it differs between a row and the query by about 0.051, while the
+  radius of a neighbour at cosine similarity 0.9 is 0.45. The interval is nine standard deviations
+  wide and keeps nearly every row. The higher the dimension, the worse this gets.
 - **Random directions.** No better than a raw component, for the same reason.
-- **Leading principal components.** A leading principal component carries 5 to 15 percent of the
-  variance instead of `1/768` of it. With four components carrying 15, 8, 5 and 4 percent, the
-  four ranges keep about 59, 74, 84 and 89 percent of the rows, roughly a factor of 3 combined.
+- **Leading principal components.** The directions along which the data varies most. A leading
+  principal component carries 5 to 15 percent of the variance instead of `1/768` of it. With four
+  components carrying 15, 8, 5 and 4 percent, the four intervals keep about 59, 74, 84 and 89
+  percent of the rows, roughly a factor of 3 combined.
 
-These are orders of magnitude for typical embedding data, not measurements: the explained
-variance of the actual corpus is the number that decides whether projection columns are worth
-adding. Four components carrying 30 percent of the variance give the factor of 3 above; four
-carrying 3 percent give nothing.
+These are orders of magnitude for typical embedding data, not measurements. The explained variance
+of the actual corpus decides whether projection columns are worth adding: four components carrying
+30 percent of the variance give the factor of 3 above, four carrying 3 percent give nothing.
 
-### Fitting
+## Fitting the directions in SQL
 
-Fit the directions once, on a sample. The eigendecomposition is not something SQL does, and for
-something computed once there is no reason to try:
+Principal components are the leading eigenvectors of the covariance matrix, but they can be found
+without an eigensolver. Subspace iteration repeats two steps: multiply the current directions by
+the covariance, then make them orthonormal again. They converge onto the principal components in
+order of variance. Multiplying a direction `v` by the covariance is an average over the rows,
+`avg(y * (y.v))` where `y` is a row minus the mean, so a step is `vector_projections` and
+`vector_avg_agg` in one statement.
 
-```python
-from sklearn.decomposition import PCA
-import numpy as np
+Fit on a sample: a million rows is plenty. The walkthrough fits four directions from a table
+`sample(id, embedding array(real))`.
 
-X = np.asarray(sample, dtype=np.float32)           # (1e6, 768)
-pca = PCA(n_components=4, svd_solver="randomized").fit(X)
-
-V = pca.components_                                 # (4, 768), orthonormal
-print(pca.explained_variance_ratio_)                # the number that decides
-```
-
-`PCA` centres the data to find the directions, and that matters: without centring the first
-component points along the mean, which carries magnitude but little variance. The stored
-projections need no centring, since the bound is unaffected by a translation applied to both
-sides.
-
-The directions go in a table, one row each, rather than in a literal of 3072 floats:
+### The mean
 
 ```sql
-CREATE TABLE projections (idx integer, direction array(real));
+CREATE TABLE pca_mean AS
+SELECT vector_avg_agg(CAST(embedding AS array(double))) AS mu
+FROM sample;
 ```
 
-The directions never need refitting as the table grows: a stale direction prunes less, it never
-returns a wrong result.
+Centring matters here, and only here. Without it the first direction converges onto the mean,
+which carries magnitude but little variance. The projection columns themselves need no centring:
+the filter compares a row's projection with the query's, and a shift applied to both cancels out.
+
+### The starting directions
+
+Any four rows will do:
+
+```sql
+CREATE TABLE pca_directions AS
+SELECT CAST(row_number() OVER () AS integer) AS idx, CAST(embedding AS array(double)) AS direction
+FROM (SELECT embedding FROM sample ORDER BY rand() LIMIT 4);
+```
+
+### One iteration
+
+Repeat this statement, swapping the new table in each time:
+
+```sql
+CREATE TABLE pca_directions_next AS
+WITH basis AS (SELECT array_agg(direction ORDER BY idx) AS directions FROM pca_directions),
+centred AS (
+    SELECT zip_with(CAST(s.embedding AS array(double)), m.mu, (x, mu) -> x - mu) AS y
+    FROM sample s CROSS JOIN pca_mean m
+),
+projected AS (
+    SELECT c.y, vector_projections(c.y, b.directions) AS p
+    FROM centred c CROSS JOIN basis b
+),
+products AS (
+    SELECT array_agg(w ORDER BY j) AS ws
+    FROM (SELECT j, vector_avg_agg(transform(y, x -> x * p[j])) AS w
+          FROM projected CROSS JOIN UNNEST(sequence(1, cardinality(p))) AS t(j)
+          GROUP BY j)
+)
+SELECT CAST(idx AS integer) AS idx, direction
+FROM products
+CROSS JOIN UNNEST(reduce(
+    ws,
+    CAST(ARRAY[] AS array(array(double))),
+    (done, w) -> done || normalize_vector(
+        reduce(done, w, (r, v) -> zip_with(r, v, (x, e) -> x - dot_product(r, v) * e), r -> r)),
+    done -> done)) WITH ORDINALITY AS u(direction, idx);
+
+DROP TABLE pca_directions;
+ALTER TABLE pca_directions_next RENAME TO pca_directions;
+```
+
+`products` is the multiplication by the covariance: one `vector_avg_agg` per direction, all in a
+single scan of the sample. The `reduce` at the end is Gram-Schmidt: each new direction has its
+components along the earlier ones subtracted, then is scaled to unit length. That keeps the
+directions orthonormal, which the radius guess in step 1 of the search relies on, and keeps them
+from all converging onto the first component.
+
+Each iteration reads the sample once. How many are needed depends on how quickly the variance
+decays past the fourth component, so measure rather than guess: stop when the explained variance
+no longer grows from one iteration to the next.
+
+### The explained variance
+
+The fraction of the sample's variance each direction captures, which is the number that decides
+whether the columns are worth adding:
+
+```sql
+WITH basis AS (SELECT array_agg(direction ORDER BY idx) AS directions FROM pca_directions),
+centred AS (
+    SELECT zip_with(CAST(s.embedding AS array(double)), m.mu, (x, mu) -> x - mu) AS y
+    FROM sample s CROSS JOIN pca_mean m
+)
+SELECT j, avg(p[j] * p[j]) / avg(dot_product(y, y)) AS explained_variance_ratio
+FROM (SELECT c.y, vector_projections(c.y, b.directions) AS p FROM centred c CROSS JOIN basis b)
+CROSS JOIN UNNEST(sequence(1, cardinality(p))) AS t(j)
+GROUP BY j
+ORDER BY j;
+```
+
+### Keeping the result
+
+```sql
+CREATE TABLE projections AS
+SELECT idx, CAST(direction AS array(real)) AS direction
+FROM pca_directions;
+```
+
+The directions never need refitting as the table grows: stale directions skip less, they never
+return a wrong result.
+
+The fit can also be done outside Trino. scikit-learn's `PCA(n_components=4).fit(sample)` gives the
+same directions in `components_` and the same ratios in `explained_variance_ratio_`, and the four
+rows go into the same `projections` table.
 
 ## Writing the projection columns
 
@@ -113,25 +220,36 @@ serialised into the plan.
 
 ## Exact search
 
-A range predicate needs a radius before it can prune. A guessed radius proves nothing on its own:
-a box that is too narrow can still hold more than `k` rows while having excluded a true neighbour,
-so counting rows cannot tell a wrong result from a right one. What makes the search exact is
-checking the result against the radius it was computed with.
+A box filter needs a radius, and the right radius is the distance to the k-th neighbour, which is
+what the search is looking for. So the radius is guessed, and the result is checked against it.
 
-Take `:p1` to `:p4` as the query's projections, from
-`vector_projections(:q, (SELECT array_agg(direction ORDER BY idx) FROM projections))`.
+Compute the query's own projections first, with the same directions in the same order:
 
 ```sql
--- 1. A radius guess, from the four scalar columns alone. On orthonormal directions the
---    projected distance is a lower bound on the true one, so it ranks candidates honestly.
---    No vector is read: at a billion rows that is 32 GB rather than 3 TB.
+SELECT vector_projections(:q, (SELECT array_agg(direction ORDER BY idx) FROM projections));
+-- gives :p1, :p2, :p3, :p4
+```
+
+### Step 1: guess a radius
+
+```sql
 SELECT sqrt(pow(pc_1 - :p1, 2) + pow(pc_2 - :p2, 2)
           + pow(pc_3 - :p3, 2) + pow(pc_4 - :p4, 2)) AS rho
 FROM embeddings
 ORDER BY rho
 OFFSET 9999 LIMIT 1;
+```
 
--- 2. One scan under a box predicate, which is what the file statistics can prune on.
+This reads the four `double` columns and no vector: at a billion rows, 32 GB rather than 3 TB. On
+orthonormal directions the distance between projections is never larger than the true distance
+(Bessel's inequality), so ranking rows by it is a fair first estimate.
+
+`OFFSET 9999` takes the 1000k-th smallest value. A larger offset makes a wider box, which reads
+more in step 2 and needs fewer retries; a smaller one the reverse.
+
+### Step 2: search inside the box
+
+```sql
 SELECT n.id, n.distance
 FROM (SELECT knn_agg(id, embedding, :q, 10, 'euclidean') AS top
       FROM embeddings
@@ -140,39 +258,32 @@ FROM (SELECT knn_agg(id, embedding, :q, 10, 'euclidean') AS top
         AND pc_3 BETWEEN :p3 - :rho AND :p3 + :rho
         AND pc_4 BETWEEN :p4 - :rho AND :p4 + :rho) t
 CROSS JOIN UNNEST(t.top) AS n(id, distance);
-
--- 3. If 10 rows came back and the 10th distance is at most rho, they are the true top 10.
---    Otherwise widen rho, doubling it for instance, and run step 2 again.
 ```
 
-Why step 3 is a proof: a row `y` outside the box has `|y.v_j - q.v_j| > rho` for some direction
-`j`, hence `||y - q|| > rho`. If the k-th distance found is at most `rho`, no row outside the box
-can be closer than it, so nothing was missed. The converse holds too: once `rho` reaches the true
-k-th distance, the box contains every true neighbour and the check passes. A poor first guess
-costs a retry, never a wrong answer.
+This is the scan Iceberg can prune. Its result is already a usable approximate top 10.
 
-Two details are load-bearing:
+### Step 3: check
 
-- **Fewer than `k` rows fails the check.** It means the box held fewer than `k` rows, which says
-  nothing about the rows outside it.
-- **The bound is on euclidean distance.** On normalised vectors cosine distance is
-  `||x - q||^2 / 2`, so the same search answers `'cosine'` queries with the check in step 3 read
-  as `distance <= rho * rho / 2`. `'dot_product'` on vectors of varying magnitude has no such
-  bound.
+- **10 rows came back and the 10th distance is at most `rho`:** they are the true top 10.
+- **Otherwise:** double `rho` and run step 2 again.
 
-The box is a superset of the sphere step 1 ranks on. That is deliberate: file statistics are
-per-column ranges, so a sphere cannot be pushed down to them and the box is what survives into the
-file filter.
+Why this is a proof: a row outside the box is more than `rho` away from the query along at least
+one direction, so it is more than `rho` away from the query. If the 10th row found is within
+`rho`, no row outside the box can beat it, and nothing was missed. And once `rho` reaches the
+true 10th distance, the box holds every true neighbour, so the loop always ends.
 
-`OFFSET 9999` takes the thousand-k-th smallest projected distance. A larger offset reads more rows
-in step 2 and retries less often, a smaller one the reverse; how good a first guess it is depends
-on how much of the corpus' variance the directions capture. Step 2's result is a usable
-approximate top `k` whether or not it passes, and step 3 is what turns it into a proven one.
+Counting rows is not enough. A box that is too narrow can still hold more than 10 rows while
+leaving out true neighbours; only the distance check tells the two apart. Fewer than 10 rows fails
+the check for the same reason: it says nothing about the rows outside the box.
 
-Any `k` rows of the table give a radius that cannot be too small: their k-th distance to the
-query is at least the true one, so a box of that radius always passes the check. Where an
-[IVF index](ivf.md) exists, the k-th distance found by probing a few clusters is such a radius,
-and a tight one, but nothing here depends on it.
+The bound is on euclidean distance. On normalised vectors cosine distance is `||x - q||^2 / 2`,
+so a `'cosine'` search works the same way with the check read as `distance <= rho * rho / 2`.
+`'dot_product'` on vectors of varying magnitude has no such bound.
+
+Any `k` rows of the table give a radius that cannot be too small: their k-th distance to the query
+is at least the true one, so a box of that radius always passes the check. Where an
+[IVF index](ivf.md) exists, the k-th distance found by probing a few clusters is such a radius, and
+a tight one, but nothing here depends on it.
 
 ## Iceberg details
 
@@ -183,20 +294,19 @@ All three of these fail silently: the query stays correct and reads everything.
   Projection columns beyond that get no bounds and prune nothing. Declare them early in the schema,
   or set `write.metadata.metrics.column.pc_1 = 'full'` and the like for each of them.
 - **Keep the columns flat.** A `struct` of projections keeps its statistics, since every leaf has
-  its own field id and bounds, but pushing a predicate on a subfield all the way down to file
-  pruning is not something to assume. Flat columns are safe. `EXPLAIN ANALYZE` of step 2 shows how
-  many rows and files were actually read, and is the check either way.
-- **Appends erode the ordering.** File pruning works when files cover narrow, mostly disjoint
-  ranges of `pc_1`. `sorted_by` orders the rows within each file Trino writes, which helps row
+  its own field id and bounds, but pushing a filter on a subfield all the way down to file pruning
+  is not something to assume. Flat columns are safe. `EXPLAIN ANALYZE` of step 2 shows how many
+  rows and files were actually read, and is the check either way.
+- **Appends erode the ordering.** Files are skipped when each covers a narrow range of `pc_1` that
+  the others do not. `sorted_by` orders the rows within each file Trino writes, which helps the row
   groups inside a file, but every append writes files whose ranges overlap the existing ones, and
-  once the ranges overlap their bounds prune nothing. The table needs a periodic rewrite that sorts
-  across files, such as Spark's `rewrite_data_files` with the `sort` strategy. This is the one real
-  maintenance cost here: the directions never need refitting, but the file layout does, and unlike
-  an IVF table's `cluster_id`, which partitioning routes naturally, there is no layout that does not
-  degrade under appends.
+  overlapping ranges skip nothing. The table needs a periodic rewrite that sorts across files, such
+  as Spark's `rewrite_data_files` with the `sort` strategy. This is the one real maintenance cost
+  here: the directions never need refitting, but the file layout does.
 
 ## What to expect
 
 A factor of about 3 on a linear scan with good directions, against roughly 60 for the
-[IVF](ivf.md) configuration described there. What projection columns add is exactness with a proof, through the check in step
-3, and independence: the three steps need the four columns and nothing else.
+[IVF](ivf.md) configuration described there. What projection columns add is exactness with a
+proof, through the check in step 3, and independence: the search needs the four columns and
+nothing else.

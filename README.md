@@ -43,7 +43,7 @@ GROUP BY category;
 | [Quantisation and approximate search](docs/quantization.md) | int8 and binary codes, fitting bounds, recall, oversample and re-rank |
 | [Text embeddings](docs/embeddings.md) | `to_vector_*`, feature hashing and its limits |
 | [Clustering and IVF search](docs/ivf.md) | `nearest_vector`, `vector_avg_agg`, fitting centroids in SQL, probing, maintenance |
-| [Projection columns and data skipping](docs/projections.md) | `vector_projections`, choosing directions, exact search under a range predicate, Iceberg details |
+| [Projection columns and data skipping](docs/projections.md) | `vector_projections`, fitting principal directions in SQL, exact search under a range filter, Iceberg details |
 | [Benchmarks](BENCHMARKS.md) | recorded measurements and how to read them |
 
 ## Function index
