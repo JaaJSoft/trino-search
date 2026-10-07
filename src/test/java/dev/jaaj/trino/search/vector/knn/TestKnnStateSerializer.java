@@ -17,6 +17,7 @@ import dev.jaaj.trino.search.vector.Metric;
 import dev.jaaj.trino.search.vector.knn.KnnStateFactory.SingleKnnState;
 import io.trino.spi.block.Block;
 import io.trino.spi.block.BlockBuilder;
+import io.trino.spi.block.SqlRow;
 import io.trino.spi.block.ValueBlock;
 import io.trino.spi.type.ArrayType;
 import io.trino.spi.type.RowType;
@@ -24,6 +25,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.DoubleType.DOUBLE;
@@ -117,6 +119,58 @@ public class TestKnnStateSerializer
         assertThat(state.getMetric()).isEqualTo(Metric.EUCLIDEAN);
         assertThat(keysOf(state)).containsExactly("a", "b", "c");
         assertThat(distancesOf(state)).containsExactly(1.0, 2.0, 3.0);
+    }
+
+    @Test
+    public void testRoundTripOfAFullHeapReturnsTheSameNeighbours()
+    {
+        for (Metric metric : List.of(Metric.EUCLIDEAN, Metric.DOT_PRODUCT)) {
+            SingleKnnState original = randomState(metric, 16, 200);
+
+            SingleKnnState restored = deserialized(serialized(original), 0);
+
+            assertThat(keysOf(restored)).containsExactlyElementsOf(keysOf(original));
+            assertThat(distancesOf(restored)).containsExactlyElementsOf(distancesOf(original));
+        }
+    }
+
+    /**
+     * Only the final output is ordered by distance, so sorting on the way out of a partial state
+     * is work nobody observes. Writing the heap's own order also hands the restoring side a
+     * sequence that is already a valid heap, which it rebuilds without moving anything.
+     */
+    @Test
+    public void testSerializeWritesNeighboursInHeapOrder()
+    {
+        SingleKnnState state = randomState(Metric.EUCLIDEAN, 16, 200);
+
+        Block block = serialized(state);
+        SqlRow row = serializedType().getObject(block, 0);
+        Block distances = new ArrayType(DOUBLE).getObject(row.getRawFieldBlock(3), row.getRawIndex());
+
+        List<Double> written = new ArrayList<>();
+        for (int i = 0; i < distances.getPositionCount(); i++) {
+            written.add(DOUBLE.getDouble(distances, i));
+        }
+        assertThat(written).containsExactlyElementsOf(state.getHeap().drainUnsorted().stream()
+                .map(KnnHeap.Neighbour::distance)
+                .toList());
+    }
+
+    private static RowType serializedType()
+    {
+        return (RowType) SERIALIZER.getSerializedType();
+    }
+
+    private static SingleKnnState randomState(Metric metric, int k, int candidates)
+    {
+        Random random = new Random(42);
+        Object[] neighbours = new Object[2 * candidates];
+        for (int i = 0; i < candidates; i++) {
+            neighbours[2 * i] = "key" + i;
+            neighbours[2 * i + 1] = random.nextDouble() * 1000;
+        }
+        return state(metric, k, neighbours);
     }
 
     /**
