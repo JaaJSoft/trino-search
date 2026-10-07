@@ -369,6 +369,125 @@ public class TestVectorMath
         assertThat(VectorMath.norm(doubles(3.0, 4.0), DOUBLE_READER)).isCloseTo(5.0, within(1e-12));
     }
 
+    /**
+     * The norm's counterpart of {@link #testTheVectorisedRealDotProductWidensBeforeMultiplying}.
+     * Every component is a multiple of a tenth, whose square is not exact in float, so a body that
+     * squared the float lanes and widened afterwards would be off in the seventh digit.
+     */
+    @Test
+    public void testTheVectorisedRealNormWidensBeforeSquaring()
+    {
+        int length = REAL_LANE_SPANNING_LENGTH;
+        Float[] vector = new Float[length];
+        double expected = 0;
+        for (int i = 0; i < length; i++) {
+            vector[i] = 0.1f * (i + 1);
+            expected += (double) vector[i] * (double) vector[i];
+        }
+
+        assertThat(VectorMath.norm(reals(vector), REAL_READER))
+                .isCloseTo(Math.sqrt(expected), within(1e-9));
+    }
+
+    /**
+     * Every component differs from its neighbour, so starting even one position early or dropping
+     * the components past the last whole step of the wide loop changes the answer.
+     */
+    @Test
+    public void testALongNormRegionIsReadFromItsOwnOffsetThroughout()
+    {
+        int length = DOUBLE_LANE_SPANNING_LENGTH;
+        Double[] backing = new Double[length + 5];
+        for (int i = 0; i < backing.length; i++) {
+            backing[i] = (double) i;
+        }
+        double sumOfSquares = 0;
+        for (int i = 0; i < length; i++) {
+            sumOfSquares += (double) (i + 5) * (i + 5);
+        }
+
+        assertThat(VectorMath.norm(doubles(backing).getRegion(5, length), DOUBLE_READER))
+                .isCloseTo(Math.sqrt(sumOfSquares), within(1e-9));
+    }
+
+    @Test
+    public void testALongRealNormRegionIsReadFromItsOwnOffsetThroughout()
+    {
+        int length = REAL_LANE_SPANNING_LENGTH;
+        Float[] backing = new Float[length + 5];
+        for (int i = 0; i < backing.length; i++) {
+            backing[i] = (float) i;
+        }
+        double sumOfSquares = 0;
+        for (int i = 0; i < length; i++) {
+            sumOfSquares += (double) (i + 5) * (i + 5);
+        }
+
+        assertThat(VectorMath.norm(reals(backing).getRegion(5, length), REAL_READER))
+                .isCloseTo(Math.sqrt(sumOfSquares), within(1e-9));
+    }
+
+    /**
+     * {@link #testNormWhenTheSumOfSquaresOverflows} is two components long, so the whole of it
+     * runs in the scalar remainder. These are long enough for the overflow, the underflow and the
+     * genuine zero to arise in the wide loop and still reach the rescaling.
+     */
+    @Test
+    public void testALongNormWhoseSumOfSquaresOverflowsIsRescaled()
+    {
+        int length = DOUBLE_LANE_SPANNING_LENGTH;
+        Double[] huge = new Double[length];
+        java.util.Arrays.fill(huge, 1e200);
+
+        assertThat(VectorMath.norm(doubles(huge), DOUBLE_READER))
+                .isCloseTo(Math.sqrt(length) * 1e200, within(1e188));
+    }
+
+    @Test
+    public void testALongNormWhoseSquaresUnderflowIsRescaled()
+    {
+        int length = DOUBLE_LANE_SPANNING_LENGTH;
+        Double[] tiny = new Double[length];
+        java.util.Arrays.fill(tiny, 1e-200);
+
+        assertThat(VectorMath.norm(doubles(tiny), DOUBLE_READER))
+                .isCloseTo(Math.sqrt(length) * 1e-200, within(1e-212));
+    }
+
+    @Test
+    public void testALongZeroVectorHasAZeroNorm()
+    {
+        Double[] zeros = new Double[DOUBLE_LANE_SPANNING_LENGTH];
+        java.util.Arrays.fill(zeros, 0.0);
+        Float[] realZeros = new Float[REAL_LANE_SPANNING_LENGTH];
+        java.util.Arrays.fill(realZeros, 0.0f);
+
+        assertThat(VectorMath.norm(doubles(zeros), DOUBLE_READER)).isEqualTo(0.0);
+        assertThat(VectorMath.norm(reals(realZeros), REAL_READER)).isEqualTo(0.0);
+    }
+
+    /**
+     * Five components so that the scalar fallback covers both a whole unrolled step and a
+     * remainder, picked from the backing array in reverse so that reading it by position instead
+     * of through the dictionary would square a different set of values.
+     */
+    @Test
+    public void testADictionaryEncodedVectorNormIsReadThroughItsPositions()
+    {
+        Block dictionary = doubles(0.0, 1.0, 2.0, 3.0, 4.0, 5.0);
+        Block vector = DictionaryBlock.create(5, dictionary, new int[] {5, 4, 3, 2, 1});
+
+        assertThat(VectorMath.norm(vector, DOUBLE_READER)).isCloseTo(Math.sqrt(55.0), within(1e-12));
+    }
+
+    @Test
+    public void testARunLengthEncodedRealVectorNormIsReadThroughItsPositions()
+    {
+        Block vector = RunLengthEncodedBlock.create(reals(2.0f), 7);
+
+        assertThat(VectorMath.norm(vector, REAL_READER)).isCloseTo(Math.sqrt(28.0), within(1e-12));
+    }
+
     @Test
     public void testCosineSimilarityOfIdenticalVectorsIsOne()
     {
