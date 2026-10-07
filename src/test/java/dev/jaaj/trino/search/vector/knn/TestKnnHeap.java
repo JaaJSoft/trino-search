@@ -22,8 +22,10 @@ import io.trino.spi.type.RowType;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Random;
+import java.util.stream.LongStream;
 
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.VarcharType.VARCHAR;
@@ -403,6 +405,76 @@ public class TestKnnHeap
         List<Double> actual = heap.drainSorted().stream().map(KnnHeap.Neighbour::distance).toList();
 
         assertThat(actual).isEqualTo(expected);
+    }
+
+    /**
+     * The aggregation builds a heap from the first row of every group, so a footprint that scales
+     * with k is paid in full by groups that never hold more than a few neighbours.
+     */
+    @Test
+    public void testEmptyHeapSizeDoesNotDependOnK()
+    {
+        assertThat(new KnnHeap(KnnAggregation.MAX_K, false).estimatedSizeInBytes())
+                .isEqualTo(new KnnHeap(16, false).estimatedSizeInBytes());
+    }
+
+    @Test
+    public void testSizeFollowsTheNeighboursRatherThanK()
+    {
+        KnnHeap heap = new KnnHeap(KnnAggregation.MAX_K, false);
+        for (int i = 0; i < 100; i++) {
+            add(heap, i, i);
+        }
+
+        assertThat(heap.estimatedSizeInBytes()).isLessThan((long) KnnAggregation.MAX_K * Double.BYTES);
+    }
+
+    @Test
+    public void testGrowsToHoldExactlyKNeighbours()
+    {
+        int k = 1000;
+        KnnHeap heap = new KnnHeap(k, false);
+        for (int i = 0; i < 3 * k; i++) {
+            add(heap, i, 3 * k - i);
+        }
+
+        assertThat(heap.size()).isEqualTo(k);
+        assertThat(longKeysOf(heap)).isEqualTo(LongStream.range(2 * k, 3 * k).boxed().toList().reversed());
+    }
+
+    @Test
+    public void testMatchesABruteForceSortWhileGrowing()
+    {
+        for (int k : new int[] {17, 100, 777}) {
+            KnnHeap heap = new KnnHeap(k, true);
+            Random random = new Random(k);
+            List<Double> all = new ArrayList<>();
+            for (int i = 0; i < 2000; i++) {
+                double distance = random.nextDouble() * 1000;
+                all.add(distance);
+                add(heap, i, distance);
+            }
+
+            List<Double> expected = all.stream().sorted(Comparator.reverseOrder()).limit(k).toList();
+            List<Double> actual = heap.drainSorted().stream().map(KnnHeap.Neighbour::distance).toList();
+
+            assertThat(actual).isEqualTo(expected);
+        }
+    }
+
+    @Test
+    public void testMergeGrowsTheReceivingHeap()
+    {
+        KnnHeap left = new KnnHeap(64, false);
+        KnnHeap right = new KnnHeap(64, false);
+        for (int i = 0; i < 40; i++) {
+            add(left, 2 * i, 2 * i);
+            add(right, 2 * i + 1, 2 * i + 1);
+        }
+
+        left.mergeFrom(right);
+
+        assertThat(longKeysOf(left)).isEqualTo(LongStream.range(0, 64).boxed().toList());
     }
 
     @Test

@@ -16,6 +16,7 @@ package dev.jaaj.trino.search.vector.knn;
 import io.trino.spi.block.ValueBlock;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 
@@ -36,17 +37,23 @@ import static io.airlift.slice.SizeOf.sizeOf;
  * see a reference. {@code getSingleValueBlock} is the SPI's copy for every one of those shapes at
  * once, which bounds retention to the key itself and makes {@link #estimatedSizeInBytes()} report
  * what the heap really holds. That number is what Trino kills a query on.
+ * <p>
+ * The arrays start at {@value #INITIAL_CAPACITY} slots and double up to {@code k} as neighbours
+ * arrive, because the aggregation builds a heap from the first row of every group: reserving
+ * {@code k} slots upfront would make each group pay for the neighbours it could hold rather than
+ * the ones it does.
  */
 public final class KnnHeap
 {
     private static final long INSTANCE_SIZE = instanceSize(KnnHeap.class);
+    private static final int INITIAL_CAPACITY = 16;
 
     public record Neighbour(ValueBlock key, double distance) {}
 
     private final int k;
     private final boolean higherIsCloser;
-    private final double[] distances;
-    private final ValueBlock[] keys;
+    private double[] distances;
+    private ValueBlock[] keys;
     private int size;
     private long retainedKeyBytes;
 
@@ -54,8 +61,9 @@ public final class KnnHeap
     {
         this.k = k;
         this.higherIsCloser = higherIsCloser;
-        this.distances = new double[k];
-        this.keys = new ValueBlock[k];
+        int capacity = Math.min(k, INITIAL_CAPACITY);
+        this.distances = new double[capacity];
+        this.keys = new ValueBlock[capacity];
     }
 
     public int size()
@@ -111,6 +119,9 @@ public final class KnnHeap
     private void addOwnedKey(ValueBlock key, double distance)
     {
         if (size < k) {
+            if (size == distances.length) {
+                grow();
+            }
             distances[size] = distance;
             keys[size] = key;
             retainedKeyBytes += key.getRetainedSizeInBytes();
@@ -125,6 +136,13 @@ public final class KnnHeap
             keys[0] = key;
             siftDown(0);
         }
+    }
+
+    private void grow()
+    {
+        int capacity = (int) Math.min(k, 2L * distances.length);
+        distances = Arrays.copyOf(distances, capacity);
+        keys = Arrays.copyOf(keys, capacity);
     }
 
     public List<Neighbour> drainSorted()

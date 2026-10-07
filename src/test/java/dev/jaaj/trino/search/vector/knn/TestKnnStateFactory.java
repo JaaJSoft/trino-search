@@ -280,4 +280,23 @@ public class TestKnnStateFactory
                 .isLessThan(wide)
                 .isEqualTo(empty + state.getHeap().estimatedSizeInBytes());
     }
+
+    /**
+     * A heap starts small and reallocates its arrays as neighbours arrive, so the arrays
+     * themselves change size inside a single {@code addToHeap}, not only the keys they hold.
+     */
+    @Test
+    public void testGroupedStateFollowsTheHeapAsItGrows()
+    {
+        GroupedKnnState state = singleGroupState();
+        long empty = state.getEstimatedSize();
+        input(state, "first", 0.0, 1000);
+        long single = state.getEstimatedSize();
+
+        for (int i = 1; i < 500; i++) {
+            input(state, "key" + i, i, 1000);
+            assertThat(state.getEstimatedSize()).isEqualTo(empty + state.getHeap().estimatedSizeInBytes());
+        }
+        assertThat(state.getEstimatedSize()).isGreaterThan(single + 499 * 2 * Double.BYTES);
+    }
 }
