@@ -156,7 +156,7 @@ public class TestMetric
     @Test
     public void testEveryMetricComputesOnQuantisedCodes()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, 1.0);
+        QuantizationBounds bounds = QuantizationBounds.of(new double[] {0, 0}, 1.0);
         Block origin = quantizedCodes(0, 0);
         Block threeFour = quantizedCodes(3, 4);
 
@@ -174,7 +174,7 @@ public class TestMetric
     @Test
     public void testASignedMetricIgnoresTheLimitOnQuantisedCodes()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0, 0}, 1.0);
+        QuantizationBounds bounds = QuantizationBounds.of(new double[] {0, 0}, 1.0);
         Block first = quantizedCodes(-100, 1);
         Block second = quantizedCodes(1, 1);
 
@@ -193,7 +193,7 @@ public class TestMetric
 
     private static QuantizationBounds unitBounds(int length)
     {
-        return QuantizationBounds.forTesting(new double[length], 1.0);
+        return QuantizationBounds.of(new double[length], 1.0);
     }
 
     /**

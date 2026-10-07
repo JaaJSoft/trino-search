@@ -14,12 +14,15 @@
 package dev.jaaj.trino.search.vector.hnsw;
 
 import dev.jaaj.trino.search.vector.Metric;
+import dev.jaaj.trino.search.vector.quantize.BinaryCodes;
+import dev.jaaj.trino.search.vector.quantize.QuantizationBounds;
 import io.airlift.slice.Slice;
 import io.airlift.slice.SliceInput;
 import io.airlift.slice.SliceOutput;
 import io.airlift.slice.Slices;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
+import io.trino.spi.block.ByteArrayBlock;
 import io.trino.spi.block.IntArrayBlock;
 import io.trino.spi.block.LongArrayBlock;
 
@@ -32,6 +35,7 @@ import static io.trino.spi.StandardErrorCode.EXCEEDED_FUNCTION_MEMORY_LIMIT;
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static io.trino.spi.type.DoubleType.DOUBLE;
 import static io.trino.spi.type.RealType.REAL;
+import static io.trino.spi.type.TinyintType.TINYINT;
 import static java.lang.Math.toIntExact;
 
 /**
@@ -61,27 +65,38 @@ public final class GraphInput
     private final int m;
     private final int efConstruction;
     private final int dimension;
+    // Only for INT8 codes, which mean nothing without them. A private copy, never a view onto the
+    // page the first row came from.
+    private final QuantizationBounds bounds;
+    private final int unitsPerVector;
     private final int maxRows;
 
     private long[] keys;
-    // Exactly one of these is non-null, the one matching elementType.
-    private long[] doubleComponents;
-    private int[] realComponents;
+    // Exactly one of these is non-null: longs for DOUBLE, ints for REAL, bytes for INT8 and BINARY.
+    private long[] longs;
+    private int[] ints;
+    private byte[] bytes;
     private int size;
 
-    public GraphInput(ElementType elementType, Metric metric, int m, int efConstruction, int dimension)
+    public GraphInput(ElementType elementType, Metric metric, int m, int efConstruction, int dimension, QuantizationBounds bounds)
     {
-        this(elementType, metric, m, efConstruction, dimension, INITIAL_CAPACITY);
+        this(elementType, metric, m, efConstruction, dimension, bounds == null ? null : copyOf(bounds), INITIAL_CAPACITY);
     }
 
-    private GraphInput(ElementType elementType, Metric metric, int m, int efConstruction, int dimension, int capacity)
+    private GraphInput(ElementType elementType, Metric metric, int m, int efConstruction, int dimension, QuantizationBounds bounds, int capacity)
     {
+        if ((elementType == ElementType.INT8) != (bounds != null)) {
+            throw new IllegalArgumentException("bounds are required for INT8 codes and only for them");
+        }
         this.elementType = elementType;
         this.metric = metric;
         this.m = m;
         this.efConstruction = efConstruction;
         this.dimension = dimension;
-        this.maxRows = (int) Math.min(Integer.MAX_VALUE, (MAX_SERIALIZED_BYTES - SERIALIZED_HEADER_BYTES) / bytesPerRow(elementType, dimension));
+        this.bounds = bounds;
+        this.unitsPerVector = elementType.unitsPerVector(dimension);
+        long fixedBytes = SERIALIZED_HEADER_BYTES + boundsBytes(elementType, dimension);
+        this.maxRows = (int) Math.min(Integer.MAX_VALUE, (MAX_SERIALIZED_BYTES - fixedBytes) / (Long.BYTES + elementType.bytesPerVector(dimension)));
         allocate(Math.min(capacity, maxRows));
     }
 
@@ -110,6 +125,11 @@ public final class GraphInput
         return dimension;
     }
 
+    QuantizationBounds bounds()
+    {
+        return bounds;
+    }
+
     public int size()
     {
         return size;
@@ -121,26 +141,37 @@ public final class GraphInput
     }
 
     /**
-     * Every component of every row, as one block of {@link #elementType}: row {@code i} is the
+     * Every component of every row of an array representation, as one block: row {@code i} is the
      * region starting at {@code i * dimension}. Only valid until the next {@link #add} or
      * {@link #addAll}, which may move the components to a larger array.
      */
     Block components()
     {
-        int count = size * dimension;
-        if (elementType == ElementType.DOUBLE) {
-            return new LongArrayBlock(count, Optional.empty(), doubleComponents);
-        }
-        return new IntArrayBlock(count, Optional.empty(), realComponents);
+        int count = size * unitsPerVector;
+        return switch (elementType) {
+            case DOUBLE -> new LongArrayBlock(count, Optional.empty(), longs);
+            case REAL -> new IntArrayBlock(count, Optional.empty(), ints);
+            case INT8 -> new ByteArrayBlock(count, Optional.empty(), bytes);
+            case BINARY -> throw new IllegalStateException("binary codes are not an array");
+        };
     }
 
-    void writeComponents(SliceOutput out, int row)
+    /**
+     * Every binary code, back to back: row {@code i} is the slice starting at
+     * {@code i * unitsPerVector}. Same validity as {@link #components}.
+     */
+    Slice binaryCodes()
     {
-        if (elementType == ElementType.DOUBLE) {
-            out.writeLongs(doubleComponents, row * dimension, dimension);
-        }
-        else {
-            out.writeInts(realComponents, row * dimension, dimension);
+        return Slices.wrappedBuffer(bytes, 0, size * unitsPerVector);
+    }
+
+    void writeVector(SliceOutput out, int row)
+    {
+        int offset = row * unitsPerVector;
+        switch (elementType) {
+            case DOUBLE -> out.writeLongs(longs, offset, unitsPerVector);
+            case REAL -> out.writeInts(ints, offset, unitsPerVector);
+            case INT8, BINARY -> out.writeBytes(bytes, offset, unitsPerVector);
         }
     }
 
@@ -169,24 +200,56 @@ public final class GraphInput
     }
 
     /**
-     * Appends a row. The caller has already skipped a vector with a null component.
+     * The graph stores one set of bounds and computes every distance with it, so codes fitted
+     * against different bounds in one group would be ranked as if they were comparable.
+     */
+    public void checkSameBounds(QuantizationBounds otherBounds)
+    {
+        if (!bounds.sameValuesAs(otherBounds)) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "bounds must be constant within a group of hnsw_build_agg");
+        }
+    }
+
+    /**
+     * Appends a row of an array representation. The caller has already skipped a vector with a
+     * null component.
      */
     public void add(long key, Block vector)
     {
         checkSameDimension(vector.getPositionCount());
         ensureCapacity(size + 1);
         keys[size] = key;
-        int base = size * dimension;
-        if (elementType == ElementType.DOUBLE) {
-            for (int i = 0; i < dimension; i++) {
-                doubleComponents[base + i] = Double.doubleToRawLongBits(DOUBLE.getDouble(vector, i));
+        int base = size * unitsPerVector;
+        switch (elementType) {
+            case DOUBLE -> {
+                for (int i = 0; i < dimension; i++) {
+                    longs[base + i] = Double.doubleToRawLongBits(DOUBLE.getDouble(vector, i));
+                }
             }
-        }
-        else {
-            for (int i = 0; i < dimension; i++) {
-                realComponents[base + i] = Float.floatToRawIntBits(REAL.getFloat(vector, i));
+            case REAL -> {
+                for (int i = 0; i < dimension; i++) {
+                    ints[base + i] = Float.floatToRawIntBits(REAL.getFloat(vector, i));
+                }
             }
+            case INT8 -> {
+                for (int i = 0; i < dimension; i++) {
+                    bytes[base + i] = TINYINT.getByte(vector, i);
+                }
+            }
+            case BINARY -> throw new IllegalStateException("binary codes are not an array");
         }
+        size++;
+    }
+
+    /**
+     * Appends a row of binary codes, keeping only the bytes the header says belong to the vector.
+     */
+    public void add(long key, Slice codes)
+    {
+        checkSameDimension(BinaryCodes.dimension(codes));
+        ensureCapacity(size + 1);
+        keys[size] = key;
+        codes.getBytes(0, bytes, size * unitsPerVector, unitsPerVector);
         size++;
     }
 
@@ -194,20 +257,24 @@ public final class GraphInput
     {
         checkSameParameters(other.m, other.efConstruction, Slices.utf8Slice(other.metric.sqlName()));
         checkSameDimension(other.dimension);
+        if (bounds != null) {
+            checkSameBounds(other.bounds);
+        }
         ensureCapacity(size + other.size);
         System.arraycopy(other.keys, 0, keys, size, other.size);
-        if (elementType == ElementType.DOUBLE) {
-            System.arraycopy(other.doubleComponents, 0, doubleComponents, size * dimension, other.size * dimension);
-        }
-        else {
-            System.arraycopy(other.realComponents, 0, realComponents, size * dimension, other.size * dimension);
+        int offset = size * unitsPerVector;
+        int count = other.size * unitsPerVector;
+        switch (elementType) {
+            case DOUBLE -> System.arraycopy(other.longs, 0, longs, offset, count);
+            case REAL -> System.arraycopy(other.ints, 0, ints, offset, count);
+            case INT8, BINARY -> System.arraycopy(other.bytes, 0, bytes, offset, count);
         }
         size += other.size;
     }
 
     public long getRetainedSizeInBytes()
     {
-        return INSTANCE_SIZE + sizeOf(keys) + sizeOf(doubleComponents) + sizeOf(realComponents);
+        return INSTANCE_SIZE + sizeOf(keys) + sizeOf(longs) + sizeOf(ints) + sizeOf(bytes) + boundsBytes(elementType, dimension);
     }
 
     /**
@@ -216,7 +283,10 @@ public final class GraphInput
      */
     public Slice serialize()
     {
-        Slice slice = Slices.allocate(SERIALIZED_HEADER_BYTES + toIntExact((long) size * bytesPerRow(elementType, dimension)));
+        long length = SERIALIZED_HEADER_BYTES
+                + boundsBytes(elementType, dimension)
+                + (long) size * (Long.BYTES + elementType.bytesPerVector(dimension));
+        Slice slice = Slices.allocate(toIntExact(length));
         SliceOutput out = slice.getOutput();
         out.writeByte(elementType.code());
         out.writeByte(metric.ordinal());
@@ -224,12 +294,15 @@ public final class GraphInput
         out.writeInt(efConstruction);
         out.writeInt(dimension);
         out.writeInt(size);
-        out.writeLongs(keys, 0, size);
-        if (elementType == ElementType.DOUBLE) {
-            out.writeLongs(doubleComponents, 0, size * dimension);
+        if (bounds != null) {
+            writeBounds(out, bounds);
         }
-        else {
-            out.writeInts(realComponents, 0, size * dimension);
+        out.writeLongs(keys, 0, size);
+        int count = size * unitsPerVector;
+        switch (elementType) {
+            case DOUBLE -> out.writeLongs(longs, 0, count);
+            case REAL -> out.writeInts(ints, 0, count);
+            case INT8, BINARY -> out.writeBytes(bytes, 0, count);
         }
         return slice;
     }
@@ -248,17 +321,53 @@ public final class GraphInput
         int efConstruction = in.readInt();
         int dimension = in.readInt();
         int size = in.readInt();
+        QuantizationBounds bounds = elementType == ElementType.INT8 ? readBounds(in, dimension) : null;
 
-        GraphInput input = new GraphInput(elementType, metric, m, efConstruction, dimension, size);
+        GraphInput input = new GraphInput(elementType, metric, m, efConstruction, dimension, bounds, size);
         in.readLongs(input.keys, 0, size);
-        if (elementType == ElementType.DOUBLE) {
-            in.readLongs(input.doubleComponents, 0, size * dimension);
-        }
-        else {
-            in.readInts(input.realComponents, 0, size * dimension);
+        int count = size * input.unitsPerVector;
+        switch (elementType) {
+            case DOUBLE -> in.readLongs(input.longs, 0, count);
+            case REAL -> in.readInts(input.ints, 0, count);
+            case INT8, BINARY -> in.readBytes(input.bytes, 0, count);
         }
         input.size = size;
         return input;
+    }
+
+    /**
+     * The scale first, then one offset per dimension: the layout graphs store their bounds in too.
+     */
+    static void writeBounds(SliceOutput out, QuantizationBounds bounds)
+    {
+        out.writeDouble(bounds.scale());
+        for (int i = 0; i < bounds.dimension(); i++) {
+            out.writeDouble(bounds.offset(i));
+        }
+    }
+
+    static QuantizationBounds readBounds(SliceInput in, int dimension)
+    {
+        double scale = in.readDouble();
+        double[] offsets = new double[dimension];
+        for (int i = 0; i < dimension; i++) {
+            offsets[i] = in.readDouble();
+        }
+        return QuantizationBounds.of(offsets, scale);
+    }
+
+    static long boundsBytes(ElementType elementType, int dimension)
+    {
+        return elementType == ElementType.INT8 ? Double.BYTES * (1L + dimension) : 0;
+    }
+
+    private static QuantizationBounds copyOf(QuantizationBounds bounds)
+    {
+        double[] offsets = new double[bounds.dimension()];
+        for (int i = 0; i < offsets.length; i++) {
+            offsets[i] = bounds.offset(i);
+        }
+        return QuantizationBounds.of(offsets, bounds.scale());
     }
 
     private void checkSameDimension(int otherDimension)
@@ -283,28 +392,21 @@ public final class GraphInput
         }
         int capacity = (int) Math.min(maxRows, Math.max(required, keys.length + (long) (keys.length >> 1)));
         keys = Arrays.copyOf(keys, capacity);
-        if (elementType == ElementType.DOUBLE) {
-            doubleComponents = Arrays.copyOf(doubleComponents, capacity * dimension);
-        }
-        else {
-            realComponents = Arrays.copyOf(realComponents, capacity * dimension);
+        switch (elementType) {
+            case DOUBLE -> longs = Arrays.copyOf(longs, capacity * unitsPerVector);
+            case REAL -> ints = Arrays.copyOf(ints, capacity * unitsPerVector);
+            case INT8, BINARY -> bytes = Arrays.copyOf(bytes, capacity * unitsPerVector);
         }
     }
 
     private void allocate(int capacity)
     {
         keys = new long[capacity];
-        if (elementType == ElementType.DOUBLE) {
-            doubleComponents = new long[capacity * dimension];
+        switch (elementType) {
+            case DOUBLE -> longs = new long[capacity * unitsPerVector];
+            case REAL -> ints = new int[capacity * unitsPerVector];
+            case INT8, BINARY -> bytes = new byte[capacity * unitsPerVector];
         }
-        else {
-            realComponents = new int[capacity * dimension];
-        }
-    }
-
-    private static long bytesPerRow(ElementType elementType, int dimension)
-    {
-        return Long.BYTES + (long) dimension * elementType.byteSize();
     }
 
     private static TrinoException notConstant(String argument, Object value, Object otherValue)

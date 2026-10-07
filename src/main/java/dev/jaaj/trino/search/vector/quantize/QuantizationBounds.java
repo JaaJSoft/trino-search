@@ -63,7 +63,7 @@ public final class QuantizationBounds
         return new QuantizationBounds(offsets, scale);
     }
 
-    public static QuantizationBounds forTesting(double[] offsets, double scale)
+    public static QuantizationBounds of(double[] offsets, double scale)
     {
         return new QuantizationBounds(doubleBlock(offsets), scale);
     }
@@ -117,6 +117,23 @@ public final class QuantizationBounds
     public double decode(int i, byte code)
     {
         return offset(i) + code * scale;
+    }
+
+    /**
+     * Whether both hold the same scale and offsets, bit for bit: codes fitted against one can only
+     * be compared with codes fitted against the other when nothing differs.
+     */
+    public boolean sameValuesAs(QuantizationBounds other)
+    {
+        if (Double.doubleToLongBits(scale) != Double.doubleToLongBits(other.scale) || dimension() != other.dimension()) {
+            return false;
+        }
+        for (int i = 0; i < dimension(); i++) {
+            if (Double.doubleToLongBits(offset(i)) != Double.doubleToLongBits(other.offset(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public void checkDimension(int length)

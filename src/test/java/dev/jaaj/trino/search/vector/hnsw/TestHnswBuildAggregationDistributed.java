@@ -78,6 +78,28 @@ public class TestHnswBuildAggregationDistributed
         assertThat(computeScalar(query)).isEqualTo(computeActual(singleStep, query).getOnlyValue());
     }
 
+    /**
+     * The int8 partial state carries the bounds as well as the codes, and the binary one carries
+     * whole codes rather than components, so each has its own serialized form to get wrong.
+     */
+    @Test
+    public void testQuantisedGraphsAcrossSplitsAreTheGraphsOfASingleStep()
+    {
+        Session singleStep = Session.builder(getSession())
+                .setSystemProperty("prefer_partial_aggregation", "false")
+                .build();
+        for (String codes : new String[] {"quantize_vector_tinyint(v, bounds), bounds", "quantize_vector_varbinary(v, bounds)"}) {
+            String query =
+                    """
+                    WITH vectors AS (SELECT orderkey, ARRAY[CAST(custkey AS double), CAST(orderkey AS double) / 100] AS v FROM orders),
+                    params AS (SELECT vector_bounds_agg(v) AS bounds FROM vectors)
+                    SELECT to_hex(sha256(hnsw_build_agg(orderkey, %s, 8, 32, 'euclidean')))
+                    FROM vectors CROSS JOIN params
+                    """.formatted(codes);
+            assertThat(computeScalar(query)).as(codes).isEqualTo(computeActual(singleStep, query).getOnlyValue());
+        }
+    }
+
     @Test
     public void testGraphHoldsEveryRowAcrossSplits()
     {

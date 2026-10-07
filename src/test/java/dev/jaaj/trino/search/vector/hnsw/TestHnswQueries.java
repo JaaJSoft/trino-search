@@ -160,6 +160,113 @@ public class TestHnswQueries
         assertEqualsIgnoreOrder(actual, expected);
     }
 
+    /**
+     * The quantised workflow end to end: fit bounds, build over int8 codes, search with a query
+     * quantised against the same bounds, then re-rank an oversampled shortlist on the exact vectors.
+     */
+    @Test
+    public void testInt8GraphWithExactReRanking()
+    {
+        MaterializedResult actual = computeActual(
+                """
+                WITH documents AS (SELECT * FROM %s),
+                params AS (SELECT vector_bounds_agg(embedding) AS bounds FROM documents),
+                graphs AS (
+                    SELECT hnsw_build_agg(id, quantize_vector_tinyint(embedding, bounds), bounds, 4, 8, 'euclidean') AS graph
+                    FROM documents CROSS JOIN params),
+                shortlist AS (
+                    SELECT n.key
+                    FROM graphs
+                    CROSS JOIN params
+                    CROSS JOIN UNNEST(hnsw_search(graph, quantize_vector_tinyint(ARRAY[DOUBLE '0.9', DOUBLE '0.2'], bounds), 4, 6)) AS n(key, distance))
+                SELECT CAST(d.id AS bigint)
+                FROM shortlist s
+                JOIN documents d ON d.id = s.key
+                ORDER BY euclidean_distance(d.embedding, ARRAY[DOUBLE '0.9', DOUBLE '0.2'])
+                LIMIT 2
+                """.formatted(DOCUMENTS));
+        MaterializedResult expected = computeActual(
+                "SELECT CAST(id AS bigint) FROM %s ORDER BY euclidean_distance(embedding, ARRAY[DOUBLE '0.9', DOUBLE '0.2']) LIMIT 2"
+                        .formatted(DOCUMENTS));
+        assertThat(actual.getMaterializedRows()).isEqualTo(expected.getMaterializedRows());
+    }
+
+    @Test
+    public void testInt8DistanceIsTheQuantisedDistance()
+    {
+        assertQuery(
+                """
+                WITH documents AS (SELECT * FROM %s),
+                params AS (SELECT vector_bounds_agg(embedding) AS bounds FROM documents),
+                graphs AS (
+                    SELECT hnsw_build_agg(id, quantize_vector_tinyint(embedding, bounds), bounds, 4, 8, 'manhattan') AS graph
+                    FROM documents CROSS JOIN params)
+                SELECT n.distance = manhattan_distance(quantize_vector_tinyint(d.embedding, p.bounds), quantize_vector_tinyint(ARRAY[DOUBLE '3', DOUBLE '3'], p.bounds), p.bounds)
+                FROM graphs
+                CROSS JOIN params p
+                CROSS JOIN UNNEST(hnsw_search(graph, quantize_vector_tinyint(ARRAY[DOUBLE '3', DOUBLE '3'], p.bounds), 1, 6)) AS n(key, distance)
+                JOIN documents d ON d.id = n.key
+                """.formatted(DOCUMENTS),
+                "VALUES true");
+    }
+
+    /**
+     * Each dimension's midpoint splits the documents, so (3, 4) and (6, 8) share the code (1, 1)
+     * and either is a correct nearest neighbour.
+     */
+    @Test
+    public void testBinaryGraph()
+    {
+        assertQuery(
+                """
+                WITH documents AS (SELECT * FROM %s),
+                params AS (SELECT vector_bounds_agg(embedding) AS bounds FROM documents),
+                graphs AS (
+                    SELECT hnsw_build_agg(id, quantize_vector_varbinary(embedding, bounds), 4, 8, 'euclidean') AS graph
+                    FROM documents CROSS JOIN params)
+                SELECT n.key IN (3, 5), n.distance
+                FROM graphs
+                CROSS JOIN params
+                CROSS JOIN UNNEST(hnsw_search(graph, quantize_vector_varbinary(ARRAY[DOUBLE '6', DOUBLE '8'], bounds), 1, 6)) AS n(key, distance)
+                """.formatted(DOCUMENTS),
+                "VALUES (true, 0.0)");
+    }
+
+    @Test
+    public void testBoundsMustBeConstantWithinAGroup()
+    {
+        assertQueryFails(
+                """
+                SELECT hnsw_build_agg(id, CAST(ARRAY[0, 0] AS array(tinyint)), CAST(ROW(ARRAY[DOUBLE '0', DOUBLE '0'], id) AS row(offsets array(double), scale double)), 4, 8, 'euclidean')
+                FROM %s
+                """.formatted(DOCUMENTS),
+                "bounds must be constant within a group of hnsw_build_agg");
+    }
+
+    @Test
+    public void testBoundsOfAnotherDimensionAreRejected()
+    {
+        assertQueryFails(
+                """
+                SELECT hnsw_build_agg(id, CAST(ARRAY[0, 0] AS array(tinyint)), CAST(ROW(ARRAY[DOUBLE '0'], 1.0) AS row(offsets array(double), scale double)), 4, 8, 'euclidean')
+                FROM %s
+                """.formatted(DOCUMENTS),
+                "The vector has 2 components but the quantisation bounds were fitted on 1");
+    }
+
+    @Test
+    public void testQuantisedGraphSearchedWithAFloatQueryIsRejected()
+    {
+        assertQueryFails(
+                """
+                WITH documents AS (SELECT * FROM %s),
+                params AS (SELECT vector_bounds_agg(embedding) AS bounds FROM documents)
+                SELECT hnsw_search(hnsw_build_agg(id, quantize_vector_tinyint(embedding, bounds), bounds, 4, 8, 'euclidean'), ARRAY[DOUBLE '0', DOUBLE '0'], 1, 1)
+                FROM documents CROSS JOIN params
+                """.formatted(DOCUMENTS),
+                "The graph was built from array\\(tinyint\\) vectors and cannot be searched with a array\\(double\\) query");
+    }
+
     @Test
     public void testEmptyGroupBuildsNoGraph()
     {

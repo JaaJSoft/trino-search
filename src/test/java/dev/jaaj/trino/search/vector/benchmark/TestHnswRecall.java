@@ -17,6 +17,7 @@ import dev.jaaj.trino.search.vector.hnsw.HnswBuildAggregation;
 import dev.jaaj.trino.search.vector.hnsw.HnswBuildState;
 import dev.jaaj.trino.search.vector.hnsw.HnswBuildStateFactory;
 import dev.jaaj.trino.search.vector.hnsw.HnswSearchFunctions;
+import dev.jaaj.trino.search.vector.quantize.QuantizationBounds;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 import io.trino.spi.block.Block;
@@ -25,7 +26,9 @@ import io.trino.spi.block.SqlRow;
 import io.trino.spi.type.RowType;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import static dev.jaaj.trino.search.vector.benchmark.VectorDataset.Regime.CLUSTERED;
 import static dev.jaaj.trino.search.vector.benchmark.VectorDataset.Regime.UNIFORM;
@@ -107,6 +110,104 @@ public class TestHnswRecall
                 previous = recall;
             }
         }
+    }
+
+    /**
+     * A graph over int8 codes, scored by key against the exact neighbours of the float vectors, as
+     * {@link TestQuantizedKnnAggRecall} scores the exact scan over the same codes: the loss here
+     * is the quantisation's and the graph's together.
+     */
+    @Test
+    public void testInt8GraphRecall()
+    {
+        assertShortlistRecallAtLeast(CLUSTERED, false, K, 64, 0.945);
+        assertShortlistRecallAtLeast(UNIFORM, false, K, 64, 0.985);
+        assertShortlistRecallAtLeast(UNIFORM, false, 2 * K, 64, 0.99);
+    }
+
+    /**
+     * Binary codes need an oversampled shortlist before re-ranking is useful, graph or not, and
+     * under the uniform regime a wide one: one bit per component has little to exploit when every
+     * pairwise distance is about the same.
+     */
+    @Test
+    public void testBinaryGraphRecallWithOversampling()
+    {
+        assertShortlistRecallAtLeast(CLUSTERED, true, 10 * K, 200, 0.99);
+        assertShortlistRecallAtLeast(UNIFORM, true, 10 * K, 200, 0.71);
+        assertShortlistRecallAtLeast(UNIFORM, true, 20 * K, 400, 0.885);
+    }
+
+    /**
+     * What the graph costs on top of the quantisation: a candidate list as long as the corpus reads
+     * every code, so it measures the codes alone. The graph at a usual candidate list is pinned to
+     * within one flipped near-tie of it.
+     */
+    @Test
+    public void testGraphOverCodesLosesNothingOverAnExhaustiveSearchOfTheSameCodes()
+    {
+        for (VectorDataset.Regime regime : List.of(CLUSTERED, UNIFORM)) {
+            double exhaustive = shortlistRecall(regime, false, K, BASE_SIZE);
+            assertThat(shortlistRecall(regime, false, K, 64)).as("int8 / %s", regime).isGreaterThanOrEqualTo(exhaustive - 0.005);
+        }
+        double exhaustive = shortlistRecall(CLUSTERED, true, 10 * K, BASE_SIZE);
+        assertThat(shortlistRecall(CLUSTERED, true, 10 * K, 200)).as("binary").isGreaterThanOrEqualTo(exhaustive - 0.005);
+    }
+
+    private static void assertShortlistRecallAtLeast(VectorDataset.Regime regime, boolean binary, int shortlist, int ef, double floor)
+    {
+        assertThat(shortlistRecall(regime, binary, shortlist, ef))
+                .as("%s / %s / shortlist %s at ef %s", regime, binary ? "binary" : "int8", shortlist, ef)
+                .isGreaterThanOrEqualTo(floor);
+    }
+
+    /**
+     * How many of the true nearest K the search put anywhere in its shortlist, which is what a
+     * re-ranking join against the exact vectors recovers.
+     */
+    private static double shortlistRecall(VectorDataset.Regime regime, boolean binary, int shortlist, int ef)
+    {
+        VectorDataset dataset = VectorDataset.generate(regime, BASE_SIZE, QUERY_COUNT, DIMENSION, 31L);
+        QuantizationBounds bounds = VectorBlocks.fitBounds(dataset.base());
+        Slice metric = Slices.utf8Slice("euclidean");
+
+        HnswBuildState state = new HnswBuildStateFactory().createSingleState();
+        for (int i = 0; i < dataset.base().length; i++) {
+            if (binary) {
+                HnswBuildAggregation.OfBinaryVectors.input(state, i, VectorBlocks.binaryVector(dataset.base()[i], bounds), M, EF_CONSTRUCTION, metric);
+            }
+            else {
+                HnswBuildAggregation.OfQuantizedVectors.input(state, i, VectorBlocks.int8Vector(dataset.base()[i], bounds), VectorBlocks.boundsRow(bounds), M, EF_CONSTRUCTION, metric);
+            }
+        }
+        BlockBuilder out = VARBINARY.createBlockBuilder(null, 1);
+        if (binary) {
+            HnswBuildAggregation.OfBinaryVectors.output(state, out);
+        }
+        else {
+            HnswBuildAggregation.OfQuantizedVectors.output(state, out);
+        }
+        Slice graph = VARBINARY.getSlice(out.build(), 0);
+
+        double total = 0;
+        for (double[] query : dataset.queries()) {
+            Block result = binary
+                    ? HnswSearchFunctions.searchBinary(graph, VectorBlocks.binaryVector(query, bounds), shortlist, Math.max(ef, shortlist))
+                    : HnswSearchFunctions.searchQuantized(graph, VectorBlocks.int8Vector(query, bounds), shortlist, Math.max(ef, shortlist));
+            Set<Long> shortlisted = new HashSet<>();
+            for (int i = 0; i < result.getPositionCount(); i++) {
+                SqlRow row = NEIGHBOUR_TYPE.getObject(result, i);
+                shortlisted.add(BIGINT.getLong(row.getRawFieldBlock(0), row.getRawIndex()));
+            }
+            int found = 0;
+            for (int key : BruteForce.sortedKeys(query, dataset.base(), BruteForce.Distance.EUCLIDEAN, K)) {
+                if (shortlisted.contains((long) key)) {
+                    found++;
+                }
+            }
+            total += (double) found / K;
+        }
+        return total / dataset.queries().length;
     }
 
     private static void assertRecallAtLeast(VectorDataset.Regime regime, BruteForce.Distance distance, boolean realVectors, int ef, double floor)

@@ -16,9 +16,12 @@ package dev.jaaj.trino.search.vector.hnsw;
 import dev.jaaj.trino.search.vector.Metric;
 import dev.jaaj.trino.search.vector.VectorReader;
 import dev.jaaj.trino.search.vector.hnsw.NodeQueue.ScoredNodes;
+import dev.jaaj.trino.search.vector.quantize.BinaryCodes;
+import dev.jaaj.trino.search.vector.quantize.QuantizationBounds;
 import io.airlift.slice.Slice;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
+import io.trino.spi.block.ByteArrayBlock;
 import io.trino.spi.block.IntArrayBlock;
 import io.trino.spi.block.LongArrayBlock;
 
@@ -26,27 +29,33 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.IntFunction;
 
+import static dev.jaaj.trino.search.vector.VectorReader.DOUBLE_READER;
+import static dev.jaaj.trino.search.vector.VectorReader.REAL_READER;
 import static dev.jaaj.trino.search.vector.hnsw.LayerSearch.toValue;
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
+import static io.trino.spi.type.TinyintType.TINYINT;
 
 /**
  * A serialized HNSW graph, searched in place.
  * <p>
  * Nothing is decoded up front. A search touches a few thousand nodes whatever the size of the
  * graph, so copying every vector out of the value first would turn it back into a pass over the
- * whole partition. Each visited node's components are copied into one reused buffer instead, and
- * its neighbours are read straight from the value.
+ * whole partition. Each visited node's components are copied into one reused buffer instead, or,
+ * for binary codes, read through a view onto the value, and its neighbours are read straight from
+ * the value.
  * <p>
  * The layout, every number little-endian:
  * <pre>
  * int     magic, "HNSW"
  * byte    format version
- * byte    element type code
+ * byte    representation code
  * byte    length of the metric name, then its UTF-8 bytes
  * int     dimension, m, node count, entry point, top level, length of the link section in ints
+ * double  for int8 codes only: the scale, then one offset per dimension
  * long    key of each node
- * double  or float, the components of each node, dimension per node
+ * ...     the vector of each node, in the layout {@link ElementType} describes
  * byte    top level of each node
  * int     offset of each node's links in the link section, in ints
  * int     the link section: for each node and each of its levels from 0 up, the neighbour count
@@ -73,19 +82,28 @@ public final class HnswGraph
     private final int entryPoint;
     private final int maxLevel;
     private final int linksLength;
+    private final QuantizationBounds bounds;
 
     private final int keysOffset;
-    private final int componentsOffset;
+    private final int vectorsOffset;
+    private final int unitsPerVector;
+    private final int bytesPerVector;
     private final int levelsOffset;
     private final int linkOffsetsOffset;
     private final int linksOffset;
 
-    // One of these two backs the block vector() hands out, depending on the element type.
-    private final long[] doubleBuffer;
-    private final int[] realBuffer;
-    private final Block vectorBuffer;
-
-    private HnswGraph(Slice slice, ElementType elementType, Metric metric, int headerBytes, int dimension, int m, int nodeCount, int entryPoint, int maxLevel, int linksLength)
+    private HnswGraph(
+            Slice slice,
+            ElementType elementType,
+            Metric metric,
+            int headerBytes,
+            int dimension,
+            int m,
+            int nodeCount,
+            int entryPoint,
+            int maxLevel,
+            int linksLength,
+            QuantizationBounds bounds)
     {
         this.slice = slice;
         this.elementType = elementType;
@@ -96,23 +114,15 @@ public final class HnswGraph
         this.entryPoint = entryPoint;
         this.maxLevel = maxLevel;
         this.linksLength = linksLength;
+        this.bounds = bounds;
 
-        this.keysOffset = headerBytes;
-        this.componentsOffset = keysOffset + nodeCount * Long.BYTES;
-        this.levelsOffset = componentsOffset + nodeCount * dimension * elementType.byteSize();
+        this.unitsPerVector = elementType.unitsPerVector(dimension);
+        this.bytesPerVector = (int) elementType.bytesPerVector(dimension);
+        this.keysOffset = headerBytes + (int) GraphInput.boundsBytes(elementType, dimension);
+        this.vectorsOffset = keysOffset + nodeCount * Long.BYTES;
+        this.levelsOffset = vectorsOffset + nodeCount * bytesPerVector;
         this.linkOffsetsOffset = levelsOffset + nodeCount;
         this.linksOffset = linkOffsetsOffset + nodeCount * Integer.BYTES;
-
-        if (elementType == ElementType.DOUBLE) {
-            this.doubleBuffer = new long[dimension];
-            this.realBuffer = null;
-            this.vectorBuffer = new LongArrayBlock(dimension, Optional.empty(), doubleBuffer);
-        }
-        else {
-            this.doubleBuffer = null;
-            this.realBuffer = new int[dimension];
-            this.vectorBuffer = new IntArrayBlock(dimension, Optional.empty(), realBuffer);
-        }
     }
 
     static int headerBytes(int metricNameLength)
@@ -156,35 +166,79 @@ public final class HnswGraph
             throw corrupt();
         }
         long expectedLength = headerBytes
-                + (long) nodeCount * (Long.BYTES + (long) dimension * elementType.byteSize() + Byte.BYTES + Integer.BYTES)
+                + GraphInput.boundsBytes(elementType, dimension)
+                + (long) nodeCount * (Long.BYTES + elementType.bytesPerVector(dimension) + Byte.BYTES + Integer.BYTES)
                 + (long) linksLength * Integer.BYTES;
         if (expectedLength != slice.length()) {
             throw corrupt();
         }
-        return new HnswGraph(slice, elementType, metric, headerBytes, dimension, m, nodeCount, entryPoint, maxLevel, linksLength);
+        QuantizationBounds bounds = elementType == ElementType.INT8
+                ? GraphInput.readBounds(slice.slice(headerBytes, slice.length() - headerBytes).getInput(), dimension)
+                : null;
+        return new HnswGraph(slice, elementType, metric, headerBytes, dimension, m, nodeCount, entryPoint, maxLevel, linksLength, bounds);
     }
 
     /**
      * The {@code k} nodes nearest to {@code query} that a search with a candidate list of
-     * {@code ef} finds, nearest first. {@code query} is read through {@code queryReader} and then
-     * converted to the graph's element type, so the distances returned are the ones the graph's own
-     * representation gives.
+     * {@code ef} finds, nearest first, for a query of an array representation.
+     * <p>
+     * A float query against a float graph is converted to the graph's representation first, so the
+     * distances returned are the ones the graph's own representation gives. An int8 query is used
+     * as it is, and has to have been quantised with the bounds the graph was built with.
      */
-    public List<Neighbour> search(Block query, VectorReader queryReader, int k, int ef)
+    public List<Neighbour> search(Block query, ElementType queryType, int k, int ef)
     {
-        if (query.getPositionCount() != dimension) {
-            throw new TrinoException(
-                    INVALID_FUNCTION_ARGUMENT,
-                    "The query vector must have the dimension of the graph, found %s and %s".formatted(query.getPositionCount(), dimension));
-        }
-        Block plainQuery = elementType.plainCopy(query, queryReader);
-        LayerSearch search = new LayerSearch(this, metric, elementType.reader(), 2 * m);
+        checkQueryType(queryType);
+        checkDimension(query.getPositionCount());
+        Block plainQuery = plainCopy(query, queryType);
+        return switch (elementType) {
+            case DOUBLE -> {
+                long[] buffer = new long[dimension];
+                Block vector = new LongArrayBlock(dimension, Optional.empty(), buffer);
+                yield search(plainQuery, node -> {
+                    slice.getLongs(vectorOffset(node), buffer, 0, dimension);
+                    return vector;
+                }, VectorDistance.floats(metric, DOUBLE_READER), k, ef);
+            }
+            case REAL -> {
+                int[] buffer = new int[dimension];
+                Block vector = new IntArrayBlock(dimension, Optional.empty(), buffer);
+                yield search(plainQuery, node -> {
+                    slice.getInts(vectorOffset(node), buffer, 0, dimension);
+                    return vector;
+                }, VectorDistance.floats(metric, REAL_READER), k, ef);
+            }
+            case INT8 -> {
+                byte[] buffer = new byte[dimension];
+                Block vector = new ByteArrayBlock(dimension, Optional.empty(), buffer);
+                yield search(plainQuery, node -> {
+                    slice.getBytes(vectorOffset(node), buffer, 0, dimension);
+                    return vector;
+                }, VectorDistance.int8(metric, bounds), k, ef);
+            }
+            case BINARY -> throw new IllegalStateException("checked above");
+        };
+    }
 
-        ScoredNodes entryPoints = ScoredNodes.single(entryPoint, search.rank(entryPoint, plainQuery, Double.POSITIVE_INFINITY));
+    /**
+     * The binary counterpart of {@link #search(Block, ElementType, int, int)}. A stored code is
+     * read through a view onto the value, without a copy.
+     */
+    public List<Neighbour> searchBinary(Slice query, int k, int ef)
+    {
+        checkQueryType(ElementType.BINARY);
+        checkDimension(BinaryCodes.dimension(query));
+        return search(query, node -> slice.slice(vectorOffset(node), unitsPerVector), VectorDistance.binary(metric), k, ef);
+    }
+
+    private <V> List<Neighbour> search(V query, IntFunction<V> vectors, VectorDistance<V> distance, int k, int ef)
+    {
+        LayerSearch<V> search = new LayerSearch<>(this, vectors, distance, metric, 2 * m);
+        ScoredNodes entryPoints = ScoredNodes.single(entryPoint, search.rank(entryPoint, query, Double.POSITIVE_INFINITY));
         for (int level = maxLevel; level > 0; level--) {
-            entryPoints = search.search(plainQuery, entryPoints, 1, level);
+            entryPoints = search.search(query, entryPoints, 1, level);
         }
-        ScoredNodes found = search.search(plainQuery, entryPoints, ef, 0);
+        ScoredNodes found = search.search(query, entryPoints, ef, 0);
 
         int count = Math.min(k, found.count());
         List<Neighbour> neighbours = new ArrayList<>(count);
@@ -193,6 +247,71 @@ public final class HnswGraph
             neighbours.add(new Neighbour(slice.getLong(keysOffset + node * Long.BYTES), toValue(metric, found.rank(i))));
         }
         return neighbours;
+    }
+
+    private void checkQueryType(ElementType queryType)
+    {
+        if (queryType != elementType && !(queryType.isFloat() && elementType.isFloat())) {
+            throw new TrinoException(
+                    INVALID_FUNCTION_ARGUMENT,
+                    "The graph was built from %s vectors and cannot be searched with a %s query".formatted(elementType.sqlType(), queryType.sqlType()));
+        }
+    }
+
+    private void checkDimension(int queryDimension)
+    {
+        if (queryDimension != dimension) {
+            throw new TrinoException(
+                    INVALID_FUNCTION_ARGUMENT,
+                    "The query vector must have the dimension of the graph, found %s and %s".formatted(queryDimension, dimension));
+        }
+    }
+
+    /**
+     * {@code query} as a block of the graph's representation with no null mask and its components
+     * starting at offset zero of an array of its own, which is the shape every vectorised kernel
+     * recognises. A double read into a real is rounded to the nearest float, exactly as a
+     * {@code CAST} would.
+     */
+    private Block plainCopy(Block query, ElementType queryType)
+    {
+        int length = query.getPositionCount();
+        return switch (elementType) {
+            case DOUBLE -> {
+                VectorReader reader = readerOf(queryType);
+                long[] bits = new long[length];
+                for (int i = 0; i < length; i++) {
+                    bits[i] = Double.doubleToRawLongBits(reader.read(query, i));
+                }
+                yield new LongArrayBlock(length, Optional.empty(), bits);
+            }
+            case REAL -> {
+                VectorReader reader = readerOf(queryType);
+                int[] bits = new int[length];
+                for (int i = 0; i < length; i++) {
+                    bits[i] = Float.floatToRawIntBits((float) reader.read(query, i));
+                }
+                yield new IntArrayBlock(length, Optional.empty(), bits);
+            }
+            case INT8 -> {
+                byte[] codes = new byte[length];
+                for (int i = 0; i < length; i++) {
+                    codes[i] = TINYINT.getByte(query, i);
+                }
+                yield new ByteArrayBlock(length, Optional.empty(), codes);
+            }
+            case BINARY -> throw new IllegalStateException("binary codes are not an array");
+        };
+    }
+
+    private static VectorReader readerOf(ElementType floatType)
+    {
+        return floatType == ElementType.DOUBLE ? DOUBLE_READER : REAL_READER;
+    }
+
+    private int vectorOffset(int node)
+    {
+        return vectorsOffset + node * bytesPerVector;
     }
 
     @Override
@@ -223,19 +342,6 @@ public final class HnswGraph
             into[i] = neighbour;
         }
         return count;
-    }
-
-    @Override
-    public Block vector(int node)
-    {
-        int offset = componentsOffset + node * dimension * elementType.byteSize();
-        if (elementType == ElementType.DOUBLE) {
-            slice.getLongs(offset, doubleBuffer, 0, dimension);
-        }
-        else {
-            slice.getInts(offset, realBuffer, 0, dimension);
-        }
-        return vectorBuffer;
     }
 
     private int link(int position)

@@ -14,7 +14,6 @@
 package dev.jaaj.trino.search.vector.hnsw;
 
 import dev.jaaj.trino.search.vector.Metric;
-import dev.jaaj.trino.search.vector.VectorReader;
 import dev.jaaj.trino.search.vector.hnsw.NodeQueue.ScoredNodes;
 import io.airlift.slice.Slice;
 import io.airlift.slice.SliceOutput;
@@ -24,8 +23,11 @@ import io.trino.spi.block.Block;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
+import java.util.function.IntFunction;
 import java.util.stream.IntStream;
 
+import static dev.jaaj.trino.search.vector.VectorReader.DOUBLE_READER;
+import static dev.jaaj.trino.search.vector.VectorReader.REAL_READER;
 import static dev.jaaj.trino.search.vector.hnsw.LayerSearch.toRank;
 import static dev.jaaj.trino.search.vector.hnsw.LayerSearch.toValue;
 import static io.trino.spi.StandardErrorCode.EXCEEDED_FUNCTION_MEMORY_LIMIT;
@@ -41,19 +43,18 @@ import static io.trino.spi.StandardErrorCode.EXCEEDED_FUNCTION_MEMORY_LIMIT;
  * order is also what keeps an input sorted by key, or arriving cluster by cluster, from being
  * inserted in an order that leaves the graph poorly connected.
  */
-public final class HnswGraphBuilder
+public final class HnswGraphBuilder<V>
         implements GraphLayers
 {
     private static final long LEVEL_SALT = 0x9E3779B97F4A7C15L;
 
     private final GraphInput input;
     private final Metric metric;
-    private final VectorReader reader;
+    private final VectorDistance<V> distance;
+    private final IntFunction<V> rowVectors;
     private final int m;
-    private final int dimension;
     private final int nodeCount;
-    private final Block components;
-    private final LayerSearch search;
+    private final LayerSearch<V> search;
 
     /**
      * The input row of each node. Node ids are insertion ranks, which is what makes them
@@ -74,15 +75,18 @@ public final class HnswGraphBuilder
     private int entryPoint = -1;
     private int maxLevel = -1;
 
-    private HnswGraphBuilder(GraphInput input)
+    /**
+     * {@code rowVectors} returns the vector of an input row as a value of its own, never a reused
+     * buffer: the neighbour selection holds two at once, and either may be the second operand.
+     */
+    private HnswGraphBuilder(GraphInput input, IntFunction<V> rowVectors, VectorDistance<V> distance)
     {
         this.input = input;
         this.metric = input.metric();
-        this.reader = input.elementType().reader();
+        this.distance = distance;
+        this.rowVectors = rowVectors;
         this.m = input.m();
-        this.dimension = input.dimension();
         this.nodeCount = input.size();
-        this.components = input.components();
         this.rows = IntStream.range(0, nodeCount)
                 .boxed()
                 .sorted(Comparator.comparingLong((Integer row) -> mix(input.key(row))))
@@ -94,7 +98,7 @@ public final class HnswGraphBuilder
             levels[node] = (byte) levelOf(input.key(rows[node]), levelMultiplier);
         }
         this.links = new int[nodeCount][][];
-        this.search = new LayerSearch(this, metric, reader, maxNeighbours(0));
+        this.search = new LayerSearch<>(this, this::vector, distance, metric, maxNeighbours(0));
         this.selectedNodes = new int[maxNeighbours(0)];
         this.selectedRanks = new double[maxNeighbours(0)];
     }
@@ -104,11 +108,32 @@ public final class HnswGraphBuilder
      */
     public static Slice build(GraphInput input)
     {
-        HnswGraphBuilder builder = new HnswGraphBuilder(input);
-        for (int node = 0; node < builder.nodeCount; node++) {
-            builder.insert(node);
+        Metric metric = input.metric();
+        int units = input.elementType().unitsPerVector(input.dimension());
+        return switch (input.elementType()) {
+            case DOUBLE -> buildArrays(input, VectorDistance.floats(metric, DOUBLE_READER));
+            case REAL -> buildArrays(input, VectorDistance.floats(metric, REAL_READER));
+            case INT8 -> buildArrays(input, VectorDistance.int8(metric, input.bounds()));
+            case BINARY -> {
+                Slice codes = input.binaryCodes();
+                yield new HnswGraphBuilder<>(input, row -> codes.slice(row * units, units), VectorDistance.binary(metric)).buildGraph();
+            }
+        };
+    }
+
+    private static Slice buildArrays(GraphInput input, VectorDistance<Block> distance)
+    {
+        Block components = input.components();
+        int dimension = input.dimension();
+        return new HnswGraphBuilder<>(input, row -> components.getRegion(row * dimension, dimension), distance).buildGraph();
+    }
+
+    private Slice buildGraph()
+    {
+        for (int node = 0; node < nodeCount; node++) {
+            insert(node);
         }
-        return builder.write();
+        return write();
     }
 
     @Override
@@ -125,14 +150,9 @@ public final class HnswGraphBuilder
         return list[0];
     }
 
-    /**
-     * A region of the input's own array, distinct per node and never overwritten while the graph
-     * is built, so it is safe as either operand of a metric, more than the contract promises.
-     */
-    @Override
-    public Block vector(int node)
+    private V vector(int node)
     {
-        return components.getRegion(rows[node] * dimension, dimension);
+        return rowVectors.apply(rows[node]);
     }
 
     private int maxNeighbours(int level)
@@ -156,7 +176,7 @@ public final class HnswGraphBuilder
             return;
         }
 
-        Block query = vector(node);
+        V query = vector(node);
         ScoredNodes entryPoints = ScoredNodes.single(entryPoint, search.rank(entryPoint, query, Double.POSITIVE_INFINITY));
         for (int i = maxLevel; i > level; i--) {
             entryPoints = search.search(query, entryPoints, 1, i);
@@ -198,12 +218,12 @@ public final class HnswGraphBuilder
             return;
         }
 
-        Block base = vector(neighbour);
+        V base = vector(neighbour);
         int[] nodes = new int[count + 1];
         double[] ranks = new double[count + 1];
         for (int i = 0; i < count; i++) {
             nodes[i] = list[i + 1];
-            ranks[i] = toRank(metric, metric.compute(vector(nodes[i]), base, reader));
+            ranks[i] = toRank(metric, distance.compute(vector(nodes[i]), base, toValue(metric, Double.POSITIVE_INFINITY)));
         }
         nodes[count] = node;
         ranks[count] = rank;
@@ -229,12 +249,12 @@ public final class HnswGraphBuilder
         for (int i = 0; i < candidates.count() && selected < limit; i++) {
             int candidate = candidates.node(i);
             double rank = candidates.rank(i);
-            Block candidateVector = vector(candidate);
+            V candidateVector = vector(candidate);
             boolean diverse = true;
             for (int j = 0; j < selected && diverse; j++) {
                 // The candidate is the second operand because it is the one that stays the same
                 // through this loop, which is the operand cosine remembers the magnitude of.
-                double between = toRank(metric, metric.computeBounded(vector(selectedNodes[j]), candidateVector, reader, toValue(metric, rank)));
+                double between = toRank(metric, distance.compute(vector(selectedNodes[j]), candidateVector, toValue(metric, rank)));
                 diverse = Double.compare(between, rank) >= 0;
             }
             if (diverse) {
@@ -255,8 +275,10 @@ public final class HnswGraphBuilder
                 linksLength += 1 + list[0];
             }
         }
+        int dimension = input.dimension();
         long totalBytes = HnswGraph.headerBytes(metricName.length)
-                + (long) nodeCount * (Long.BYTES + (long) dimension * input.elementType().byteSize() + Byte.BYTES + Integer.BYTES)
+                + GraphInput.boundsBytes(input.elementType(), dimension)
+                + (long) nodeCount * (Long.BYTES + input.elementType().bytesPerVector(dimension) + Byte.BYTES + Integer.BYTES)
                 + linksLength * Integer.BYTES;
         if (totalBytes > GraphInput.MAX_SERIALIZED_BYTES) {
             throw new TrinoException(
@@ -278,11 +300,14 @@ public final class HnswGraphBuilder
         out.writeInt(entryPoint);
         out.writeInt(maxLevel);
         out.writeInt((int) linksLength);
+        if (input.bounds() != null) {
+            GraphInput.writeBounds(out, input.bounds());
+        }
         for (int node = 0; node < nodeCount; node++) {
             out.writeLong(input.key(rows[node]));
         }
         for (int node = 0; node < nodeCount; node++) {
-            input.writeComponents(out, rows[node]);
+            input.writeVector(out, rows[node]);
         }
         out.writeBytes(levels);
         int offset = 0;

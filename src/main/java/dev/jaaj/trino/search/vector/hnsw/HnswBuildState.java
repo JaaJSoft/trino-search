@@ -13,6 +13,7 @@
  */
 package dev.jaaj.trino.search.vector.hnsw;
 
+import io.airlift.slice.Slice;
 import io.trino.spi.block.Block;
 import io.trino.spi.function.AccumulatorState;
 import io.trino.spi.function.AccumulatorStateMetadata;
@@ -34,6 +35,8 @@ public interface HnswBuildState
     void setInput(GraphInput input);
 
     void add(long key, Block vector);
+
+    void add(long key, Slice codes);
 
     void addAll(GraphInput other);
 }

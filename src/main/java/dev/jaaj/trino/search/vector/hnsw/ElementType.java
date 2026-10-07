@@ -13,83 +13,76 @@
  */
 package dev.jaaj.trino.search.vector.hnsw;
 
-import dev.jaaj.trino.search.vector.VectorReader;
-import io.trino.spi.block.Block;
-import io.trino.spi.block.IntArrayBlock;
-import io.trino.spi.block.LongArrayBlock;
-
-import java.util.Optional;
-
-import static dev.jaaj.trino.search.vector.VectorReader.DOUBLE_READER;
-import static dev.jaaj.trino.search.vector.VectorReader.REAL_READER;
+import dev.jaaj.trino.search.vector.quantize.BinaryCodes;
 
 /**
- * The component type a graph stores its vectors in, which is the element type of the arrays it was
- * built from. Components are kept as the raw bits the matching Trino type stores, doubles as long
- * bits and reals as int bits, because those are the layouts the vectorised kernels read without a
- * conversion.
+ * The representation a graph stores its vectors in, which is the one they were built from.
+ * <p>
+ * Each representation is kept in the layout its distance kernels read without a conversion:
+ * doubles as long bits, reals as int bits, int8 codes as bytes, and binary codes as the complete
+ * {@link BinaryCodes} value of each vector, header included, so that a stored code is a valid
+ * binary vector on its own.
  */
 public enum ElementType
 {
-    DOUBLE((byte) 0, Double.BYTES, DOUBLE_READER) {
-        @Override
-        Block plainCopy(Block vector, VectorReader sourceReader)
-        {
-            long[] bits = new long[vector.getPositionCount()];
-            for (int i = 0; i < bits.length; i++) {
-                bits[i] = Double.doubleToRawLongBits(sourceReader.read(vector, i));
-            }
-            return new LongArrayBlock(bits.length, Optional.empty(), bits);
-        }
-    },
-    REAL((byte) 1, Float.BYTES, REAL_READER) {
-        @Override
-        Block plainCopy(Block vector, VectorReader sourceReader)
-        {
-            int[] bits = new int[vector.getPositionCount()];
-            for (int i = 0; i < bits.length; i++) {
-                bits[i] = Float.floatToRawIntBits((float) sourceReader.read(vector, i));
-            }
-            return new IntArrayBlock(bits.length, Optional.empty(), bits);
-        }
-    };
+    DOUBLE((byte) 0, "array(double)"),
+    REAL((byte) 1, "array(real)"),
+    INT8((byte) 2, "array(tinyint)"),
+    BINARY((byte) 3, "varbinary");
 
     /**
      * Persisted in every graph, so it is spelled out rather than taken from the ordinal: reordering
      * the constants must not change what an existing graph decodes to.
      */
     private final byte code;
-    private final int byteSize;
-    private final VectorReader reader;
+    private final String sqlType;
 
-    ElementType(byte code, int byteSize, VectorReader reader)
+    ElementType(byte code, String sqlType)
     {
         this.code = code;
-        this.byteSize = byteSize;
-        this.reader = reader;
+        this.sqlType = sqlType;
     }
-
-    /**
-     * {@code vector}, read through {@code sourceReader}, as a block of this type with no null mask
-     * and its components starting at offset zero of an array of its own, which is the shape every
-     * vectorised kernel recognises. A double read into a real is rounded to the nearest float,
-     * exactly as a {@code CAST} would.
-     */
-    abstract Block plainCopy(Block vector, VectorReader sourceReader);
 
     byte code()
     {
         return code;
     }
 
-    int byteSize()
+    String sqlType()
     {
-        return byteSize;
+        return sqlType;
     }
 
-    VectorReader reader()
+    /**
+     * The two float representations can be queried with either float type, since converting a
+     * query between them is exactly a {@code CAST}. A code cannot be produced from a float without
+     * the bounds it was fitted against, so a quantised graph is only queried with codes.
+     */
+    boolean isFloat()
     {
-        return reader;
+        return this == DOUBLE || this == REAL;
+    }
+
+    /**
+     * How many elements of its backing array one vector of {@code dimension} components takes:
+     * one long, int or byte per component, or the whole binary code for a binary vector.
+     */
+    int unitsPerVector(int dimension)
+    {
+        if (this == BINARY) {
+            return BinaryCodes.HEADER_BYTES + (dimension + 7) / 8;
+        }
+        return dimension;
+    }
+
+    long bytesPerVector(int dimension)
+    {
+        long units = unitsPerVector(dimension);
+        return switch (this) {
+            case DOUBLE -> units * Long.BYTES;
+            case REAL -> units * Integer.BYTES;
+            case INT8, BINARY -> units;
+        };
     }
 
     static ElementType fromCode(byte code)

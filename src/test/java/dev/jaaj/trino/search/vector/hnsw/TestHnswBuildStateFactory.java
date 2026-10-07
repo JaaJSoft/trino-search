@@ -116,7 +116,7 @@ public class TestHnswBuildStateFactory
 
     private static GraphInput input()
     {
-        return new GraphInput(ElementType.DOUBLE, Metric.EUCLIDEAN, 8, 32, DIMENSION);
+        return new GraphInput(ElementType.DOUBLE, Metric.EUCLIDEAN, 8, 32, DIMENSION, null);
     }
 
     private static Block vector()

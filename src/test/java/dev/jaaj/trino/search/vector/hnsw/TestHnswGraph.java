@@ -25,8 +25,6 @@ import org.junit.jupiter.api.Test;
 import java.util.Arrays;
 import java.util.List;
 
-import static dev.jaaj.trino.search.vector.VectorReader.DOUBLE_READER;
-import static dev.jaaj.trino.search.vector.VectorReader.REAL_READER;
 import static dev.jaaj.trino.search.vector.benchmark.VectorDataset.Regime.CLUSTERED;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -54,7 +52,7 @@ public class TestHnswGraph
             Metric metric = Metric.fromName(distance.sqlName());
             HnswGraph graph = HnswGraph.read(build(ElementType.DOUBLE, metric, base));
             for (double[] query : dataset.queries()) {
-                List<HnswGraph.Neighbour> neighbours = graph.search(VectorBlocks.doubleVector(query), DOUBLE_READER, 10, base.length);
+                List<HnswGraph.Neighbour> neighbours = graph.search(VectorBlocks.doubleVector(query), ElementType.DOUBLE, 10, base.length);
                 int[] expected = BruteForce.sortedKeys(query, base, distance, 10);
                 assertThat(neighbours.stream().mapToLong(HnswGraph.Neighbour::key).toArray())
                         .as(distance.sqlName())
@@ -76,7 +74,7 @@ public class TestHnswGraph
         double[][] base = VectorDataset.generate(CLUSTERED, 300, 1, 8, 21L).base();
         HnswGraph graph = HnswGraph.read(build(ElementType.DOUBLE, Metric.DOT_PRODUCT, base));
 
-        List<HnswGraph.Neighbour> reached = graph.search(VectorBlocks.doubleVector(base[0]), DOUBLE_READER, base.length, base.length);
+        List<HnswGraph.Neighbour> reached = graph.search(VectorBlocks.doubleVector(base[0]), ElementType.DOUBLE, base.length, base.length);
 
         assertThat(reached).hasSizeLessThan(base.length);
     }
@@ -87,7 +85,7 @@ public class TestHnswGraph
         double[][] base = {{0, 0}, {3, 4}, {1, 0}, {0, -2}};
         HnswGraph graph = HnswGraph.read(build(ElementType.DOUBLE, Metric.EUCLIDEAN, base));
 
-        List<HnswGraph.Neighbour> neighbours = graph.search(VectorBlocks.doubleVector(new double[] {0, 0}), DOUBLE_READER, 4, 4);
+        List<HnswGraph.Neighbour> neighbours = graph.search(VectorBlocks.doubleVector(new double[] {0, 0}), ElementType.DOUBLE, 4, 4);
 
         assertThat(neighbours).containsExactly(
                 new HnswGraph.Neighbour(0, 0.0),
@@ -102,7 +100,7 @@ public class TestHnswGraph
         double[][] base = {{1, 0}, {3, 0}, {-2, 0}, {2, 0}};
         HnswGraph graph = HnswGraph.read(build(ElementType.DOUBLE, Metric.DOT_PRODUCT, base));
 
-        List<HnswGraph.Neighbour> neighbours = graph.search(VectorBlocks.doubleVector(new double[] {1, 0}), DOUBLE_READER, 2, 4);
+        List<HnswGraph.Neighbour> neighbours = graph.search(VectorBlocks.doubleVector(new double[] {1, 0}), ElementType.DOUBLE, 2, 4);
 
         assertThat(neighbours).containsExactly(
                 new HnswGraph.Neighbour(1, 3.0),
@@ -114,7 +112,7 @@ public class TestHnswGraph
     {
         HnswGraph graph = HnswGraph.read(build(ElementType.DOUBLE, Metric.EUCLIDEAN, new double[][] {{0}, {1}, {2}}));
 
-        assertThat(graph.search(VectorBlocks.doubleVector(new double[] {0}), DOUBLE_READER, 10, 10)).hasSize(3);
+        assertThat(graph.search(VectorBlocks.doubleVector(new double[] {0}), ElementType.DOUBLE, 10, 10)).hasSize(3);
     }
 
     @Test
@@ -122,7 +120,7 @@ public class TestHnswGraph
     {
         HnswGraph graph = HnswGraph.read(build(ElementType.REAL, Metric.COSINE, new double[][] {{1, 1}}));
 
-        assertThat(graph.search(VectorBlocks.realVector(new double[] {1, 1}), REAL_READER, 3, 3))
+        assertThat(graph.search(VectorBlocks.realVector(new double[] {1, 1}), ElementType.REAL, 3, 3))
                 .containsExactly(new HnswGraph.Neighbour(0, 0.0));
     }
 
@@ -141,7 +139,7 @@ public class TestHnswGraph
         }
         HnswGraph graph = HnswGraph.read(build(ElementType.DOUBLE, Metric.EUCLIDEAN, base));
 
-        List<HnswGraph.Neighbour> neighbours = graph.search(VectorBlocks.doubleVector(new double[] {1, 2, 3}), DOUBLE_READER, base.length, base.length);
+        List<HnswGraph.Neighbour> neighbours = graph.search(VectorBlocks.doubleVector(new double[] {1, 2, 3}), ElementType.DOUBLE, base.length, base.length);
 
         assertThat(neighbours).hasSize(base.length);
         assertThat(neighbours).allSatisfy(neighbour -> assertThat(neighbour.distance()).isEqualTo(0.0));
@@ -158,7 +156,7 @@ public class TestHnswGraph
         HnswGraph graph = HnswGraph.read(build(ElementType.REAL, Metric.EUCLIDEAN_SQUARED, base));
 
         double[] query = {0.3, 0.7};
-        List<HnswGraph.Neighbour> neighbours = graph.search(VectorBlocks.doubleVector(query), DOUBLE_READER, 1, 2);
+        List<HnswGraph.Neighbour> neighbours = graph.search(VectorBlocks.doubleVector(query), ElementType.DOUBLE, 1, 2);
 
         double dx = (double) (float) 0.1 - (double) (float) 0.3;
         double dy = (double) (float) 0.2 - (double) (float) 0.7;
@@ -173,7 +171,7 @@ public class TestHnswGraph
         double[][] base = {{0.5, 0.25}, {4, 4}};
         HnswGraph graph = HnswGraph.read(build(ElementType.DOUBLE, Metric.MANHATTAN, base));
 
-        List<HnswGraph.Neighbour> neighbours = graph.search(VectorBlocks.realVector(new double[] {1, 1}), REAL_READER, 1, 2);
+        List<HnswGraph.Neighbour> neighbours = graph.search(VectorBlocks.realVector(new double[] {1, 1}), ElementType.REAL, 1, 2);
 
         assertThat(neighbours).containsExactly(new HnswGraph.Neighbour(0, 1.25));
     }
@@ -240,7 +238,7 @@ public class TestHnswGraph
     public void testParametersMustBeConstantAcrossMergedStates()
     {
         GraphInput input = input(ElementType.DOUBLE, Metric.EUCLIDEAN, 1);
-        GraphInput other = new GraphInput(ElementType.DOUBLE, Metric.COSINE, M, EF_CONSTRUCTION, 1);
+        GraphInput other = new GraphInput(ElementType.DOUBLE, Metric.COSINE, M, EF_CONSTRUCTION, 1, null);
 
         assertThatThrownBy(() -> input.addAll(other))
                 .isInstanceOf(TrinoException.class)
@@ -252,7 +250,7 @@ public class TestHnswGraph
     {
         HnswGraph graph = HnswGraph.read(build(ElementType.DOUBLE, Metric.EUCLIDEAN, new double[][] {{0, 0}}));
 
-        assertThatThrownBy(() -> graph.search(VectorBlocks.doubleVector(new double[] {0, 0, 0}), DOUBLE_READER, 1, 1))
+        assertThatThrownBy(() -> graph.search(VectorBlocks.doubleVector(new double[] {0, 0, 0}), ElementType.DOUBLE, 1, 1))
                 .isInstanceOf(TrinoException.class)
                 .hasMessage("The query vector must have the dimension of the graph, found 3 and 2");
     }
@@ -287,7 +285,7 @@ public class TestHnswGraph
         // The last int of the value is the last neighbour id written.
         corrupted.setInt(corrupted.length() - Integer.BYTES, 99);
 
-        assertThatThrownBy(() -> HnswGraph.read(corrupted).search(VectorBlocks.doubleVector(new double[] {0, 0}), DOUBLE_READER, 2, 2))
+        assertThatThrownBy(() -> HnswGraph.read(corrupted).search(VectorBlocks.doubleVector(new double[] {0, 0}), ElementType.DOUBLE, 2, 2))
                 .isInstanceOf(TrinoException.class)
                 .hasMessage("The value is not a graph built by hnsw_build_agg");
     }
@@ -348,6 +346,6 @@ public class TestHnswGraph
 
     private static GraphInput input(ElementType elementType, Metric metric, int dimension)
     {
-        return new GraphInput(elementType, metric, M, EF_CONSTRUCTION, dimension);
+        return new GraphInput(elementType, metric, M, EF_CONSTRUCTION, dimension, null);
     }
 }

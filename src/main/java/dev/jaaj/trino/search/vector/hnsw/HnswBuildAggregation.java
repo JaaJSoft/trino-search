@@ -14,10 +14,13 @@
 package dev.jaaj.trino.search.vector.hnsw;
 
 import dev.jaaj.trino.search.vector.Metric;
+import dev.jaaj.trino.search.vector.quantize.BinaryCodes;
+import dev.jaaj.trino.search.vector.quantize.QuantizationBounds;
 import io.airlift.slice.Slice;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
 import io.trino.spi.block.BlockBuilder;
+import io.trino.spi.block.SqlRow;
 import io.trino.spi.function.AggregationFunction;
 import io.trino.spi.function.AggregationState;
 import io.trino.spi.function.CombineFunction;
@@ -109,16 +112,100 @@ public final class HnswBuildAggregation
         }
     }
 
+    /**
+     * Codes are only comparable through the bounds they were fitted against, so the bounds are a
+     * mandatory argument, stored once in the graph, and required to be the same on every row.
+     */
+    @AggregationFunction("hnsw_build_agg")
+    @Description("Builds an HNSW graph over the vectors of each group and returns it serialized")
+    public static final class OfQuantizedVectors
+    {
+        private OfQuantizedVectors() {}
+
+        @InputFunction
+        public static void input(
+                @AggregationState HnswBuildState state,
+                @SqlType(StandardTypes.BIGINT) long key,
+                @SqlType("array(tinyint)") Block vector,
+                @SqlType(QuantizationBounds.BOUNDS_TYPE_SIGNATURE) SqlRow boundsRow,
+                @SqlType(StandardTypes.BIGINT) long m,
+                @SqlType(StandardTypes.BIGINT) long efConstruction,
+                @SqlType(StandardTypes.VARCHAR) Slice metricName)
+        {
+            checkParameters(m, efConstruction);
+            QuantizationBounds bounds = QuantizationBounds.of(boundsRow);
+            bounds.checkDimension(vector.getPositionCount());
+            if (vector.hasNull()) {
+                return;
+            }
+            GraphInput input = state.getInput();
+            if (input == null) {
+                state.setInput(new GraphInput(ElementType.INT8, Metric.fromName(metricName), (int) m, (int) efConstruction, vector.getPositionCount(), bounds));
+            }
+            else {
+                input.checkSameParameters(m, efConstruction, metricName);
+                input.checkSameBounds(bounds);
+            }
+            state.add(key, vector);
+        }
+
+        @CombineFunction
+        public static void combine(@AggregationState HnswBuildState state, @AggregationState HnswBuildState otherState)
+        {
+            mergeStates(state, otherState);
+        }
+
+        @SqlNullable
+        @OutputFunction(StandardTypes.VARBINARY)
+        public static void output(@AggregationState HnswBuildState state, BlockBuilder out)
+        {
+            writeGraph(state, out);
+        }
+    }
+
+    @AggregationFunction("hnsw_build_agg")
+    @Description("Builds an HNSW graph over the vectors of each group and returns it serialized")
+    public static final class OfBinaryVectors
+    {
+        private OfBinaryVectors() {}
+
+        @InputFunction
+        public static void input(
+                @AggregationState HnswBuildState state,
+                @SqlType(StandardTypes.BIGINT) long key,
+                @SqlType(StandardTypes.VARBINARY) Slice vector,
+                @SqlType(StandardTypes.BIGINT) long m,
+                @SqlType(StandardTypes.BIGINT) long efConstruction,
+                @SqlType(StandardTypes.VARCHAR) Slice metricName)
+        {
+            checkParameters(m, efConstruction);
+            GraphInput input = state.getInput();
+            if (input == null) {
+                state.setInput(new GraphInput(ElementType.BINARY, Metric.fromName(metricName), (int) m, (int) efConstruction, BinaryCodes.dimension(vector), null));
+            }
+            else {
+                input.checkSameParameters(m, efConstruction, metricName);
+            }
+            state.add(key, vector);
+        }
+
+        @CombineFunction
+        public static void combine(@AggregationState HnswBuildState state, @AggregationState HnswBuildState otherState)
+        {
+            mergeStates(state, otherState);
+        }
+
+        @SqlNullable
+        @OutputFunction(StandardTypes.VARBINARY)
+        public static void output(@AggregationState HnswBuildState state, BlockBuilder out)
+        {
+            writeGraph(state, out);
+        }
+    }
+
     private static void addRow(HnswBuildState state, long key, Block vector, long m, long efConstruction, Slice metricName, ElementType elementType)
     {
-        if (m < MIN_M || m > MAX_M) {
-            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "m must be between %s and %s, got %s".formatted(MIN_M, MAX_M, m));
-        }
-        if (efConstruction < m || efConstruction > MAX_EF) {
-            throw new TrinoException(
-                    INVALID_FUNCTION_ARGUMENT,
-                    "ef_construction must be between m (%s) and %s, got %s".formatted(m, MAX_EF, efConstruction));
-        }
+        checkParameters(m, efConstruction);
         // A row that cannot be placed in the graph is skipped rather than failing the build, as in
         // knn_agg, and before it can fix the group's dimension.
         if (vector.hasNull()) {
@@ -128,12 +215,24 @@ public final class HnswBuildAggregation
         GraphInput input = state.getInput();
         if (input == null) {
             Metric metric = Metric.fromName(metricName);
-            state.setInput(new GraphInput(elementType, metric, (int) m, (int) efConstruction, vector.getPositionCount()));
+            state.setInput(new GraphInput(elementType, metric, (int) m, (int) efConstruction, vector.getPositionCount(), null));
         }
         else {
             input.checkSameParameters(m, efConstruction, metricName);
         }
         state.add(key, vector);
+    }
+
+    private static void checkParameters(long m, long efConstruction)
+    {
+        if (m < MIN_M || m > MAX_M) {
+            throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "m must be between %s and %s, got %s".formatted(MIN_M, MAX_M, m));
+        }
+        if (efConstruction < m || efConstruction > MAX_EF) {
+            throw new TrinoException(
+                    INVALID_FUNCTION_ARGUMENT,
+                    "ef_construction must be between m (%s) and %s, got %s".formatted(m, MAX_EF, efConstruction));
+        }
     }
 
     private static void mergeStates(HnswBuildState state, HnswBuildState otherState)

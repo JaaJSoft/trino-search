@@ -14,6 +14,7 @@
 package dev.jaaj.trino.search.vector.hnsw;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.airlift.slice.Slice;
 import io.trino.spi.block.Block;
 import io.trino.spi.function.AccumulatorStateFactory;
 import io.trino.spi.function.GroupedAccumulatorState;
@@ -74,6 +75,12 @@ public final class HnswBuildStateFactory
         public void add(long key, Block vector)
         {
             input.add(key, vector);
+        }
+
+        @Override
+        public void add(long key, Slice codes)
+        {
+            input.add(key, codes);
         }
 
         @Override
@@ -145,6 +152,15 @@ public final class HnswBuildStateFactory
             GraphInput input = inputs[groupId];
             inputsSizeInBytes -= input.getRetainedSizeInBytes();
             input.add(key, vector);
+            inputsSizeInBytes += input.getRetainedSizeInBytes();
+        }
+
+        @Override
+        public void add(long key, Slice codes)
+        {
+            GraphInput input = inputs[groupId];
+            inputsSizeInBytes -= input.getRetainedSizeInBytes();
+            input.add(key, codes);
             inputsSizeInBytes += input.getRetainedSizeInBytes();
         }
 

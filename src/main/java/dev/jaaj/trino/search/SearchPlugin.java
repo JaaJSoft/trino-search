@@ -49,6 +49,8 @@ public class SearchPlugin
                 NearestVectorFunctions.class,
                 HnswBuildAggregation.OfDoubleVectors.class,
                 HnswBuildAggregation.OfRealVectors.class,
+                HnswBuildAggregation.OfQuantizedVectors.class,
+                HnswBuildAggregation.OfBinaryVectors.class,
                 HnswSearchFunctions.class,
                 QuantizeFunctions.class,
                 QuantizedDistanceFunctions.class,

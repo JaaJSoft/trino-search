@@ -14,9 +14,9 @@
 package dev.jaaj.trino.search.vector.hnsw;
 
 import dev.jaaj.trino.search.vector.Metric;
-import dev.jaaj.trino.search.vector.VectorReader;
 import dev.jaaj.trino.search.vector.hnsw.NodeQueue.ScoredNodes;
-import io.trino.spi.block.Block;
+
+import java.util.function.IntFunction;
 
 /**
  * The greedy best-first search over one layer of an HNSW graph (algorithm 2 of Malkov and
@@ -26,20 +26,28 @@ import io.trino.spi.block.Block;
  * the metric value itself; for dot product, where a higher value is closer, it is the negated value.
  * Negation is exact, so the value handed back to the user is recovered bit for bit.
  */
-final class LayerSearch
+final class LayerSearch<V>
 {
     private final GraphLayers graph;
+    private final IntFunction<V> vectors;
+    private final VectorDistance<V> distance;
     private final Metric metric;
-    private final VectorReader reader;
     private final VisitedNodes visited;
     private final int[] neighbours;
     private final NodeQueue candidates = NodeQueue.nearestFirst(64);
 
-    LayerSearch(GraphLayers graph, Metric metric, VectorReader reader, int maxNeighbours)
+    /**
+     * {@code vectors} may hand out a buffer that its next call overwrites: this class is done with
+     * one node's vector before it asks for the next, and only ever passes it as the first operand,
+     * since the second is the one cosine remembers the magnitude of, keyed on the identity of its
+     * backing array, and a reused buffer would hand back a stale magnitude.
+     */
+    LayerSearch(GraphLayers graph, IntFunction<V> vectors, VectorDistance<V> distance, Metric metric, int maxNeighbours)
     {
         this.graph = graph;
+        this.vectors = vectors;
+        this.distance = distance;
         this.metric = metric;
-        this.reader = reader;
         this.visited = new VisitedNodes(graph.nodeCount());
         this.neighbours = new int[maxNeighbours];
     }
@@ -58,16 +66,16 @@ final class LayerSearch
      * The rank of {@code node} against {@code query}, or, once it is known not to beat
      * {@code limit}, some rank that does not beat it either.
      */
-    double rank(int node, Block query, double limit)
+    double rank(int node, V query, double limit)
     {
-        return toRank(metric, metric.computeBounded(graph.vector(node), query, reader, toValue(metric, limit)));
+        return toRank(metric, distance.compute(vectors.apply(node), query, toValue(metric, limit)));
     }
 
     /**
      * The {@code ef} nodes nearest to {@code query} on {@code level} that the search reaches from
      * {@code entryPoints}, nearest first.
      */
-    ScoredNodes search(Block query, ScoredNodes entryPoints, int ef, int level)
+    ScoredNodes search(V query, ScoredNodes entryPoints, int ef, int level)
     {
         visited.clear();
         candidates.clear();

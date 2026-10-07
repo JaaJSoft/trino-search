@@ -13,7 +13,6 @@
  */
 package dev.jaaj.trino.search.vector.hnsw;
 
-import dev.jaaj.trino.search.vector.VectorReader;
 import io.airlift.slice.Slice;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
@@ -27,9 +26,8 @@ import io.trino.spi.type.RowType;
 import io.trino.spi.type.StandardTypes;
 
 import java.util.List;
+import java.util.function.Function;
 
-import static dev.jaaj.trino.search.vector.VectorReader.DOUBLE_READER;
-import static dev.jaaj.trino.search.vector.VectorReader.REAL_READER;
 import static dev.jaaj.trino.search.vector.hnsw.HnswBuildAggregation.MAX_EF;
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static io.trino.spi.type.BigintType.BIGINT;
@@ -60,7 +58,7 @@ public final class HnswSearchFunctions
             @SqlType(StandardTypes.BIGINT) long k,
             @SqlType(StandardTypes.BIGINT) long efSearch)
     {
-        return searchGraph(graph, query, DOUBLE_READER, k, efSearch);
+        return searchGraph(graph, k, efSearch, hnswGraph -> query.hasNull() ? null : hnswGraph.search(query, ElementType.DOUBLE, (int) k, (int) efSearch));
     }
 
     @Description("Returns the approximate k nearest neighbours of a query vector in a graph built by hnsw_build_agg")
@@ -73,10 +71,40 @@ public final class HnswSearchFunctions
             @SqlType(StandardTypes.BIGINT) long k,
             @SqlType(StandardTypes.BIGINT) long efSearch)
     {
-        return searchGraph(graph, query, REAL_READER, k, efSearch);
+        return searchGraph(graph, k, efSearch, hnswGraph -> query.hasNull() ? null : hnswGraph.search(query, ElementType.REAL, (int) k, (int) efSearch));
     }
 
-    private static Block searchGraph(Slice graph, Block query, VectorReader queryReader, long k, long efSearch)
+    @Description("Returns the approximate k nearest neighbours of a query vector in a graph built by hnsw_build_agg")
+    @ScalarFunction("hnsw_search")
+    @SqlType(RESULT_TYPE_SIGNATURE)
+    @SqlNullable
+    public static Block searchQuantized(
+            @SqlType(StandardTypes.VARBINARY) Slice graph,
+            @SqlType("array(tinyint)") Block query,
+            @SqlType(StandardTypes.BIGINT) long k,
+            @SqlType(StandardTypes.BIGINT) long efSearch)
+    {
+        return searchGraph(graph, k, efSearch, hnswGraph -> query.hasNull() ? null : hnswGraph.search(query, ElementType.INT8, (int) k, (int) efSearch));
+    }
+
+    @Description("Returns the approximate k nearest neighbours of a query vector in a graph built by hnsw_build_agg")
+    @ScalarFunction("hnsw_search")
+    @SqlType(RESULT_TYPE_SIGNATURE)
+    @SqlNullable
+    public static Block searchBinary(
+            @SqlType(StandardTypes.VARBINARY) Slice graph,
+            @SqlType(StandardTypes.VARBINARY) Slice query,
+            @SqlType(StandardTypes.BIGINT) long k,
+            @SqlType(StandardTypes.BIGINT) long efSearch)
+    {
+        return searchGraph(graph, k, efSearch, hnswGraph -> hnswGraph.searchBinary(query, (int) k, (int) efSearch));
+    }
+
+    /**
+     * {@code search} returns null for a query with a null component, which is answered with null
+     * like any scalar function would.
+     */
+    private static Block searchGraph(Slice graph, long k, long efSearch, Function<HnswGraph, List<HnswGraph.Neighbour>> search)
     {
         if (k <= 0) {
             throw new TrinoException(INVALID_FUNCTION_ARGUMENT, "k must be greater than zero, got " + k);
@@ -91,12 +119,10 @@ public final class HnswSearchFunctions
                     INVALID_FUNCTION_ARGUMENT,
                     "ef_search must be between k (%s) and %s, got %s".formatted(k, MAX_EF, efSearch));
         }
-        HnswGraph hnswGraph = HnswGraph.read(graph);
-        if (query.hasNull()) {
+        List<HnswGraph.Neighbour> neighbours = search.apply(HnswGraph.read(graph));
+        if (neighbours == null) {
             return null;
         }
-
-        List<HnswGraph.Neighbour> neighbours = hnswGraph.search(query, queryReader, (int) k, (int) efSearch);
         BlockBuilder builder = NEIGHBOUR_TYPE.createBlockBuilder(null, neighbours.size());
         for (HnswGraph.Neighbour neighbour : neighbours) {
             ((RowBlockBuilder) builder).buildEntry(fieldBuilders -> {
