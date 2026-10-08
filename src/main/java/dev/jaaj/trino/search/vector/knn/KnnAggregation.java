@@ -61,9 +61,9 @@ public final class KnnAggregation
 {
     /**
      * Mirrors the cap Trino's own {@code min_n}/{@code max_n} family enforces in
-     * {@code io.trino.operator.aggregation.minmaxn.MinNStateFactory}: an unbounded k would let
-     * {@link KnnHeap}'s constructor eagerly allocate {@code k}-sized arrays before any input row
-     * is seen, which a large enough k turns into an out-of-memory kill of the worker process.
+     * {@code io.trino.operator.aggregation.minmaxn.MinNStateFactory}. {@link KnnHeap} grows with
+     * the neighbours it holds, so this is a backstop on what one group can retain once it fills,
+     * not the only thing keeping a large k from reserving memory before any row is seen.
      */
     static final int MAX_K = 10_000;
 
