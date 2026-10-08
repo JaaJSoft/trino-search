@@ -115,8 +115,14 @@ public class TestVectorProjectionQueries
 
     /**
      * The function exists so that N directions cost one call rather than N, not to compute
-     * anything {@code dot_product} does not: element j must be exactly the dot product with
-     * direction j, on rows long enough to reach the vectorised kernels.
+     * anything {@code dot_product} does not: element j must be the dot product with direction j,
+     * on rows long enough to reach the vectorised kernels.
+     * <p>
+     * The comparison allows a tolerance because exact equality is not reproducible even between
+     * two calls of the same kernel: {@code reduceLanes(ADD)} does not fix the order it sums the
+     * lanes in, and the Java fallback and the C2 intrinsic sum them differently, so a result moves
+     * by a few ulps the moment the kernel gets compiled. The bound sits far above that drift and
+     * far below what a wrong direction or a dropped tail would cost.
      */
     @Test
     public void testAgreesWithOneDotProductPerDirection()
@@ -131,7 +137,12 @@ public class TestVectorProjectionQueries
                     SELECT id, transform(sequence(1, 768), d -> CAST(sin(id * d) AS real)) AS embedding
                     FROM UNNEST(sequence(1, 50)) AS t(id)
                 )
-                SELECT count_if(vector_projections(r.embedding, b.ds) = transform(b.ds, v -> dot_product(r.embedding, v)))
+                SELECT count_if(all_match(
+                        zip_with(
+                                vector_projections(r.embedding, b.ds),
+                                transform(b.ds, v -> dot_product(r.embedding, v)),
+                                (projection, dot) -> abs(projection - dot) <= 1e-9),
+                        matches -> matches))
                 FROM rows r CROSS JOIN directions b
                 """);
 
