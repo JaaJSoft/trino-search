@@ -18,7 +18,11 @@ import dev.jaaj.trino.search.vector.VectorFunctions;
 import dev.jaaj.trino.search.vector.centroid.NearestVectorFunctions;
 import dev.jaaj.trino.search.vector.centroid.VectorAvgAggregation;
 import dev.jaaj.trino.search.vector.embed.EmbeddingFunctions;
+import dev.jaaj.trino.search.vector.hnsw.HnswBuildAggregation;
+import dev.jaaj.trino.search.vector.hnsw.HnswSearchFunctions;
 import dev.jaaj.trino.search.vector.knn.KnnAggregation;
+import dev.jaaj.trino.search.vector.projection.VectorPcaAggregation;
+import dev.jaaj.trino.search.vector.projection.VectorProjectionFunctions;
 import dev.jaaj.trino.search.vector.quantize.BinaryDistanceFunctions;
 import dev.jaaj.trino.search.vector.quantize.QuantizeFunctions;
 import dev.jaaj.trino.search.vector.quantize.QuantizedDistanceFunctions;
@@ -45,6 +49,14 @@ public class SearchPlugin
                 VectorAvgAggregation.OfDoubleVectors.class,
                 VectorAvgAggregation.OfRealVectors.class,
                 NearestVectorFunctions.class,
+                HnswBuildAggregation.OfDoubleVectors.class,
+                HnswBuildAggregation.OfRealVectors.class,
+                HnswBuildAggregation.OfQuantizedVectors.class,
+                HnswBuildAggregation.OfBinaryVectors.class,
+                HnswSearchFunctions.class,
+                VectorProjectionFunctions.class,
+                VectorPcaAggregation.OfDoubleVectors.class,
+                VectorPcaAggregation.OfRealVectors.class,
                 QuantizeFunctions.class,
                 QuantizedDistanceFunctions.class,
                 BinaryDistanceFunctions.class,

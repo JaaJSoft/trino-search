@@ -132,7 +132,7 @@ public class TestVectorBlocks
     @Test
     public void testInt8VectorEncodesAgainstTheBounds()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0.0}, 1.0);
+        QuantizationBounds bounds = QuantizationBounds.of(new double[] {0.0}, 1.0);
         Block codes = VectorBlocks.int8Vector(new double[] {7.0}, bounds);
         assertThat(codes.getPositionCount()).isEqualTo(1);
         assertThat(TINYINT.getByte(codes, 0)).isEqualTo((byte) 7);
@@ -141,7 +141,7 @@ public class TestVectorBlocks
     @Test
     public void testBinaryVectorSetsABitPerComponentAboveTheMidpoint()
     {
-        QuantizationBounds bounds = QuantizationBounds.forTesting(new double[] {0.0, 0.0}, 1.0);
+        QuantizationBounds bounds = QuantizationBounds.of(new double[] {0.0, 0.0}, 1.0);
         Slice codes = VectorBlocks.binaryVector(new double[] {1.0, -1.0}, bounds);
         assertThat(BinaryCodes.dimension(codes)).isEqualTo(2);
         assertThat(BinaryCodes.hamming(codes, VectorBlocks.binaryVector(new double[] {1.0, 1.0}, bounds)))

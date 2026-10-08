@@ -123,3 +123,6 @@ LIMIT 10;
 ```
 
 The scan reads only the codes; the exact vectors are read for the shortlist alone.
+
+The same codes can also be indexed: [hnsw.md](hnsw.md#graphs-over-quantised-codes) builds an HNSW
+graph per partition over them, so the shortlist comes from a graph search instead of a scan.
